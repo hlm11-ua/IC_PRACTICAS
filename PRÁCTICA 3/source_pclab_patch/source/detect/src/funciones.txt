@@ -1,0 +1,14 @@
+main:: get_srm_3x3() -> especial like you
+main:: get_srm_5x5() -> yes, especial too
+imagen:: to_grayscale()
+imagen:: covert
+imagen:: convolution() -> DIFFICULT MY FRIEND!!
+imagen:: abs()
+imagen:: normalized()
+imagen:: get_blocks()
+dct:: create_matrix()
+dct:: direct() -> ALSO DIFFICULT MY BRODI
+dct:: inverse() -> YES, DIFFICULT
+dct:: assign() 
+imagen:: operator* (x2) 1 + 1 = два
+imagen:: operator+ (x2) 1 + 1 = два
