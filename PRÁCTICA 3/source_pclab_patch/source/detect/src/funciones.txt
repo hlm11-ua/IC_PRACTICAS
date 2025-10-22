@@ -1,14 +1,27 @@
-main:: get_srm_3x3() -> especial like you
-main:: get_srm_5x5() -> yes, especial too
-imagen:: to_grayscale()
-imagen:: covert
-imagen:: convolution() -> DIFFICULT MY FRIEND!!
-imagen:: abs()
-imagen:: normalized()
-imagen:: get_blocks()
-dct:: create_matrix()
-dct:: direct() -> ALSO DIFFICULT MY BRODI
-dct:: inverse() -> YES, DIFFICULT
-dct:: assign() 
-imagen:: operator* (x2) 1 + 1 = два
-imagen:: operator+ (x2) 1 + 1 = два
+FUNCIONES QUE SE LLAMAN
+
+imagen:: to_grayscale() => MATILDE
+imagen:: covert => MATILDE
+imagen:: convolution() -> DIFFICULT MY FRIEND!! => MATILDE
+imagen:: abs() => ALEX
+imagen:: normalized() => JUAN
+imagen:: get_blocks() => HELENA
+dct:: create_matrix() => HELENA
+dct:: direct() -> ALSO DIFFICULT MY BRODI => HELENA
+dct:: inverse() -> YES, DIFFICULT => ALEX
+dct:: assign() => ALEX
+imagen:: operator* (x2) 1 + 1 = два => ADAN
+imagen:: operator+ (x2) 1 + 1 = два => ADAN
+main:: compute_dct() => JUAN
+
+FUNCIONES PARALELIZAR POR HILOS
+
+main:: get_srm_3x3() -> especial like you => ADAN
+main:: get_srm_5x5() -> yes, especial too => JUAN
+explicar: compute (i can't do it) => JUAN
+
+HELENA -> 2F 1D
+JUAN -> 3F 1E
+MATILDE -> 2F 1D
+ADAN -> 5F
+ALEX -> 2F 1D
