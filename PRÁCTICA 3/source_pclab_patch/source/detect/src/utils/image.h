@@ -5,6 +5,7 @@
 #include <iostream>
 #include "assert.h"
 #include <string>
+#include <omp.h>
 
 template <typename T> class Block;
 
@@ -105,6 +106,8 @@ template <class T> void Image<T>::set(int row, int col, int channel, T value) {
 template <class T> Image<T> Image<T>::operator*(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -118,6 +121,8 @@ template <class T> Image<T> Image<T>::operator*(const Image<T>& other) const {
 }
 template <class T> Image<T> Image<T>::operator*(float scalar) const {
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -132,6 +137,8 @@ template <class T> Image<T> Image<T>::operator*(float scalar) const {
 template <class T> Image<T> Image<T>::operator+(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -145,6 +152,8 @@ template <class T> Image<T> Image<T>::operator+(const Image<T>& other) const {
 }
 template <class T> Image<T> Image<T>::operator+(float scalar) const {
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
