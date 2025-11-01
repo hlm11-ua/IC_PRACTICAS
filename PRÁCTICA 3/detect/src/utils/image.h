@@ -156,17 +156,20 @@ template <class T> Image<T> Image<T>::operator+(float scalar) const {
         
     return new_image;
 }
+
+// PARALELIZADO CON OPENMP
 template <class T> Image<T> Image<T>::abs() const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)std::abs(this->get(j,i,c)));
+
+    #pragma omp parallel for collapse(3)
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            for (int c = 0; c < channels; c++) {
+                new_image.set(j, i, c, (T)std::abs(this->get(j, i, c)));
             }
-        }    
+        }
     }
-        
+
     return new_image;
 }
 
