@@ -214,17 +214,42 @@ template <class T> Image<T> Image<T>::operator+(float scalar) const {
         
     return new_image;
 }
+
 template <class T> Image<T> Image<T>::abs() const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)std::abs(this->get(j,i,c)));
-            }
-        }    
+
+    const unsigned num_threads = std::thread::hardware_concurrency();
+    const unsigned num_tasks = (num_threads == 0) ? 4 : num_threads;
+
+    const int rows_per_task = (height + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_tasks);
+
+    for (unsigned t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, height);
+
+        futures.push_back(
+            std::async(
+                std::launch::async, [&, start_row, end_row]() {
+                    for (int j = start_row; j < end_row; ++j) {
+                        for (int i = 0; i < width; ++i) {
+                            for (int c = 0; c < channels; ++c) {
+                                new_image.set(j, i, c, (T)std::abs(this->get(j, i, c)));
+                            }
+                        }
+                    }
+                }
+            )
+        );
     }
-        
+
+    // Esperar a que todas las tareas terminen
+    for (auto &f : futures) {
+        f.get();
+    }
+
     return new_image;
 }
 
