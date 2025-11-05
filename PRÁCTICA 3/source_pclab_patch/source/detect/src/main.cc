@@ -13,9 +13,19 @@
 
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
-    kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
-    kernel.set(1, 0, 0, 2); kernel.set(1, 1, 0, -4); kernel.set(1, 2, 0, 2);
-    kernel.set(2, 0, 0, -1); kernel.set(2, 1, 0, 2); kernel.set(2, 2, 0, -1);
+    std::vector<std::future<void>> futures;
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 0, 0, -1); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 1, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 2, 0, -1); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 0, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 1, 0, -4); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 2, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 0, 0, -1); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 1, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 2, 0, -1); }));
+    for (auto& f : futures)
+        f.get();
+
     return kernel;
 }
 
