@@ -2,6 +2,7 @@
 #include "image.h"
 #include <math.h>
 
+// HELENA
 void dct::direct(float **dct, const Block<float> &matrix, int channel)
 {
     int m = matrix.size;
@@ -9,6 +10,7 @@ void dct::direct(float **dct, const Block<float> &matrix, int channel)
 
     float ci, cj, dct1;
 
+    #pragma omp parallel for collapse(2)
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
             if (i == 0)
@@ -85,9 +87,12 @@ void dct::assign(float **DCTMatrix, Block<float> &block, int channel){
     }
 }
 
+// HELENA
 float **dct::create_matrix(int x_size, int y_size){
     float **m = new float*[x_size]; //(float**)calloc(dimX, sizeof(float*));
     float *p = new float[x_size*y_size];//(float*)calloc(dimX*dimY, sizeof(float));
+
+    # pragma omp parallel for
     for(int i=0; i<x_size;i++){
         m[i] = &p[i*y_size];
     }
