@@ -5,6 +5,7 @@
 #include <iostream>
 #include "assert.h"
 #include <string>
+#include <omp.h>
 
 template <typename T> class Block;
 
@@ -105,6 +106,8 @@ template <class T> void Image<T>::set(int row, int col, int channel, T value) {
 template <class T> Image<T> Image<T>::operator*(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -118,6 +121,8 @@ template <class T> Image<T> Image<T>::operator*(const Image<T>& other) const {
 }
 template <class T> Image<T> Image<T>::operator*(float scalar) const {
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -132,6 +137,8 @@ template <class T> Image<T> Image<T>::operator*(float scalar) const {
 template <class T> Image<T> Image<T>::operator+(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -145,6 +152,8 @@ template <class T> Image<T> Image<T>::operator+(const Image<T>& other) const {
 }
 template <class T> Image<T> Image<T>::operator+(float scalar) const {
     Image<T> new_image(width, height, channels);
+
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -156,24 +165,29 @@ template <class T> Image<T> Image<T>::operator+(float scalar) const {
         
     return new_image;
 }
+
+// PARALELIZADO CON OPENMP
 template <class T> Image<T> Image<T>::abs() const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)std::abs(this->get(j,i,c)));
+
+    #pragma omp parallel for collapse(3)
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            for (int c = 0; c < channels; c++) {
+                new_image.set(j, i, c, (T)std::abs(this->get(j, i, c)));
             }
-        }    
+        }
     }
-        
+
     return new_image;
 }
-
+//MATILDE
 template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) const {
     assert(kernel.width%2 != 0 && kernel.height%2 != 0 && kernel.width == kernel.height && kernel.channels==1);
     int kernel_size = kernel.width;
     Image<T> convolved(width, height, channels);
+    #pragma omp parallel for collapse(3)
+    //en este caso es collapse(3) y no 5 || 3 bucles independientes (j,i,c) y 2 que no (u,v)
     for(int j=0;j<height;j++){
         for(int i=0;i<width; i++){
             for(int c=0;c<channels;c++){
@@ -193,9 +207,10 @@ template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) co
     }
     return convolved;
 }
-
+//MATILDE
 template <class T> template <typename S> Image<S> Image<T>::convert() const {
     Image<S> new_image(width, height, channels);
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
@@ -207,10 +222,11 @@ template <class T> template <typename S> Image<S> Image<T>::convert() const {
         
     return new_image;
 }
-
+//MATILDE
 template <class T> Image<T> Image<T>::to_grayscale() const {
     if (channels == 1) return convert<T>();
     Image<T> image(width, height, 1);
+    #pragma omp parallel for collapse(2)
     for(int j=0;j<height;j++){
         for(int i=0;i<width;i++){
             image.set(j, i, 0, (T)((0.299 * this->get(j, i, 0) + (0.587 * this->get(j, i, 1)) + (0.114 * this->get(j,i,2)))));

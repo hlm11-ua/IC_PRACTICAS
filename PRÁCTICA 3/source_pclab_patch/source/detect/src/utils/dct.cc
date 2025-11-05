@@ -35,35 +35,33 @@ void dct::direct(float **dct, const Block<float> &matrix, int channel)
     }
 }
 
-void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max){
-
-    float Cu, Cv;
+void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max) {
     int size = idctMatrix.size;
-                   
+
+    #pragma omp parallel for collapse(2)
     for (int i = 0; i < size; ++i) {
-        for (int j = 0; j < size; ++j) { 
-            float sum = 0.0;
+        for (int j = 0; j < size; ++j) {
+            float sum = 0.0f;
+
+            // Bucles u y v usan la misma variable: Sum -> No paralelizar
+            // #pragma omp parallel for reduction(+:sum) collapse(2)
             for (int u = 0; u < size; u++) {
                 for (int v = 0; v < size; v++) {
-                    if (u == 0)
-                        Cu = 1./sqrt(2.0);
-                    else
-                        Cu = 1.0;
+                    float Cu = (u == 0) ? 1.0f / sqrtf(2.0f) : 1.0f;
+                    float Cv = (v == 0) ? 1.0f / sqrtf(2.0f) : 1.0f;
 
-                    if (v == 0)
-                        Cv = 1./sqrt(2.0);
-                    else
-                        Cv = (1.0);  
-
-                    sum += (dctMatrix[u][v] * cos((2 * i + 1) * u * M_PI / (size*2)) *
-                            cos((2 * j + 1) * v * M_PI / (size*2)));
-                }               
+                    sum += dctMatrix[u][v] *
+                           cosf((2 * i + 1) * u * M_PI / (size * 2.0f)) *
+                           cosf((2 * j + 1) * v * M_PI / (size * 2.0f)) *
+                           Cu * Cv;
+                }
             }
-            idctMatrix.set_pixel(i, j, channel, (float)(0.25 * Cu * Cv * sum));        
+
+            idctMatrix.set_pixel(i, j, channel, 0.25f * sum);
         }
-    }    
- }
- 
+    }
+}
+
 void dct::normalize(float **DCTMatrix, int size){
     float max_v=-99999999.0, min_v=999999999.0;
     for (int i=0;i<size;i++){
@@ -79,10 +77,12 @@ void dct::normalize(float **DCTMatrix, int size){
     }
 }
 
-void dct::assign(float **DCTMatrix, Block<float> &block, int channel){
-    for (int i=0;i<block.size;i++){
-        for (int j=0;j<block.size;j++){
-            block.set_pixel(i, j, channel, (float)DCTMatrix[i][j]);
+// PARALELIZADO CON OPENMP
+void dct::assign(float **DCTMatrix, Block<float> &block, int channel) {
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < block.size; i++) {
+        for (int j = 0; j < block.size; j++) {
+            block.set_pixel(i, j, channel, DCTMatrix[i][j]);
         }
     }
 }
