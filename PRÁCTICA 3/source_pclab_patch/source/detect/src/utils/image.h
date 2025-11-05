@@ -266,7 +266,6 @@ template <class T> std::vector<Block<T>> Image<T>::get_blocks(int block_size) {
   	assert(width % block_size == 0 || height % block_size == 0);
   	std::vector<Block<T>> blocks;
 
-    //#pragma omp parallel for collapse(2)
   	for (int row=0;row<height;row+=block_size)
   		for(int col=0;col<width;col+=block_size){
   			Block<T> b;
