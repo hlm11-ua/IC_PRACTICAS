@@ -32,35 +32,44 @@ void dct::direct(float **dct, const Block<float> &matrix, int channel)
         }
     }
 }
-
-void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max){
-
-    float Cu, Cv;
+void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max) {
     int size = idctMatrix.size;
-                   
-    for (int i = 0; i < size; ++i) {
-        for (int j = 0; j < size; ++j) { 
-            float sum = 0.0;
-            for (int u = 0; u < size; u++) {
-                for (int v = 0; v < size; v++) {
-                    if (u == 0)
-                        Cu = 1./sqrt(2.0);
-                    else
-                        Cu = 1.0;
+    int num_tasks = std::thread::hardware_concurrency();
+    if (num_tasks == 0) num_tasks = 4;
 
-                    if (v == 0)
-                        Cv = 1./sqrt(2.0);
-                    else
-                        Cv = (1.0);  
+    const int rows_per_task = (size + num_tasks - 1) / num_tasks;
+    std::vector<std::future<void>> tasks;
 
-                    sum += (dctMatrix[u][v] * cos((2 * i + 1) * u * M_PI / (size*2)) *
-                            cos((2 * j + 1) * v * M_PI / (size*2)));
-                }               
+    for (int t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, size);
+
+        tasks.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int i = start_row; i < end_row; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    float sum = 0.0f;
+                    for (int u = 0; u < size; ++u) {
+                        for (int v = 0; v < size; ++v) {
+                            float Cu = (u == 0) ? 1.0f / std::sqrt(2.0f) : 1.0f;
+                            float Cv = (v == 0) ? 1.0f / std::sqrt(2.0f) : 1.0f;
+
+                            sum += dctMatrix[u][v] *
+                                   std::cos((2 * i + 1) * u * M_PI / (2.0f * size)) *
+                                   std::cos((2 * j + 1) * v * M_PI / (2.0f * size));
+                        }
+                    }
+
+                    idctMatrix.set_pixel(i, j, channel, 0.25f * sum);
+                }
             }
-            idctMatrix.set_pixel(i, j, channel, (float)(0.25 * Cu * Cv * sum));        
-        }
-    }    
- }
+        }));
+    }
+
+    // Esperar a que todas las tareas terminen
+    for (auto &task : tasks) {
+        task.get();
+    }
+}
  
 void dct::normalize(float **DCTMatrix, int size){
     float max_v=-99999999.0, min_v=999999999.0;
@@ -77,11 +86,29 @@ void dct::normalize(float **DCTMatrix, int size){
     }
 }
 
-void dct::assign(float **DCTMatrix, Block<float> &block, int channel){
-    for (int i=0;i<block.size;i++){
-        for (int j=0;j<block.size;j++){
-            block.set_pixel(i, j, channel, (float)DCTMatrix[i][j]);
-        }
+void dct::assign(float **DCTMatrix, Block<float> &block, int channel) {
+    int size = block.size;
+    int num_tasks = std::thread::hardware_concurrency();
+    if (num_tasks == 0) num_tasks = 4;
+
+    const int rows_per_task = (size + num_tasks - 1) / num_tasks;
+    std::vector<std::future<void>> tasks;
+
+    for (int t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, size);
+
+        tasks.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int i = start_row; i < end_row; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    block.set_pixel(i, j, channel, DCTMatrix[i][j]);
+                }
+            }
+        }));
+    }
+
+    for (auto &task : tasks) {
+        task.get();
     }
 }
 

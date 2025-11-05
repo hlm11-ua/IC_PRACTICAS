@@ -5,6 +5,7 @@
 #include <iostream>
 #include "assert.h"
 #include <string>
+#include <future>
 
 template <typename T> class Block;
 
@@ -105,68 +106,150 @@ template <class T> void Image<T>::set(int row, int col, int channel, T value) {
 template <class T> Image<T> Image<T>::operator*(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, this->get(j, i, c) * other.get(j, i, c));
+
+    const int num_threads = std::thread::hardware_concurrency();
+    const int chunk_size = std::max(1, height / num_threads);
+
+    std::vector<std::future<void>> futures;
+
+    for (int t = 0; t < num_threads; ++t) {
+        int start_row = t * chunk_size;
+        int end_row = (t == num_threads - 1) ? height : (t + 1) * chunk_size;
+
+        futures.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int j = start_row; j < end_row; ++j) {
+                for (int i = 0; i < width; ++i) {
+                    for (int c = 0; c < channels; ++c) {
+                        new_image.set(j, i, c, this->get(j, i, c) * other.get(j, i, c));
+                    }
+                }
             }
-        }    
+        }));
     }
+
+    for (auto& f : futures)
+        f.get();
         
     return new_image;
 }
 template <class T> Image<T> Image<T>::operator*(float scalar) const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)(this->get(j, i, c)*scalar));
+    const int num_threads = std::thread::hardware_concurrency();
+    const int chunk_size = std::max(1, height / num_threads);
+
+    std::vector<std::future<void>> futures;
+
+    for (int t = 0; t < num_threads; ++t) {
+        int start_row = t * chunk_size;
+        int end_row = (t == num_threads - 1) ? height : (t + 1) * chunk_size;
+
+        futures.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int j = start_row; j < end_row; ++j) {
+                for (int i = 0; i < width; ++i) {
+                    for (int c = 0; c < channels; ++c) {
+                        new_image.set(j, i, c, this->get(j, i, c) * scalar);
+                    }
+                }
             }
-        }    
+        }));
     }
+
+    for (auto& f : futures)
+        f.get();
         
     return new_image;
 }
 template <class T> Image<T> Image<T>::operator+(const Image<T>& other) const {
     assert(width == other.width && height == other.height && channels == other.channels);
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j,i,c, this->get(j, i,c)+other.get(j, i, c));
+    const int num_threads = std::thread::hardware_concurrency();
+    const int chunk_size = std::max(1, height / num_threads);
+
+    std::vector<std::future<void>> futures;
+
+    for (int t = 0; t < num_threads; ++t) {
+        int start_row = t * chunk_size;
+        int end_row = (t == num_threads - 1) ? height : (t + 1) * chunk_size;
+
+        futures.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int j = start_row; j < end_row; ++j) {
+                for (int i = 0; i < width; ++i) {
+                    for (int c = 0; c < channels; ++c) {
+                        new_image.set(j, i, c, this->get(j, i, c) + other.get(j, i, c));
+                    }
+                }
             }
-        }    
+        }));
     }
+
+    for (auto& f : futures)
+        f.get();
         
     return new_image;
 }
 template <class T> Image<T> Image<T>::operator+(float scalar) const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, ((T)this->get(j, i, c)+scalar));
+    const int num_threads = std::thread::hardware_concurrency();
+    const int chunk_size = std::max(1, height / num_threads);
+
+    std::vector<std::future<void>> futures;
+
+    for (int t = 0; t < num_threads; ++t) {
+        int start_row = t * chunk_size;
+        int end_row = (t == num_threads - 1) ? height : (t + 1) * chunk_size;
+
+        futures.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
+            for (int j = start_row; j < end_row; ++j) {
+                for (int i = 0; i < width; ++i) {
+                    for (int c = 0; c < channels; ++c) {
+                        new_image.set(j, i, c, this->get(j, i, c) + scalar);
+                    }
+                }
             }
-        }    
+        }));
     }
+
+    for (auto& f : futures)
+        f.get();
         
     return new_image;
 }
+
 template <class T> Image<T> Image<T>::abs() const {
     Image<T> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)std::abs(this->get(j,i,c)));
-            }
-        }    
+
+    const unsigned num_threads = std::thread::hardware_concurrency();
+    const unsigned num_tasks = (num_threads == 0) ? 4 : num_threads;
+
+    const int rows_per_task = (height + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_tasks);
+
+    for (unsigned t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, height);
+
+        futures.push_back(
+            std::async(
+                std::launch::async, [&, start_row, end_row]() {
+                    for (int j = start_row; j < end_row; ++j) {
+                        for (int i = 0; i < width; ++i) {
+                            for (int c = 0; c < channels; ++c) {
+                                new_image.set(j, i, c, (T)std::abs(this->get(j, i, c)));
+                            }
+                        }
+                    }
+                }
+            )
+        );
     }
-        
+
+    // Esperar a que todas las tareas terminen
+    for (auto &f : futures) {
+        f.get();
+    }
+
     return new_image;
 }
 
