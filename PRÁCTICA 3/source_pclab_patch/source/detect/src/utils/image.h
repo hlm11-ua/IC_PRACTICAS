@@ -202,7 +202,7 @@ template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) co
     }
     return convolved;
 }
-
+//MATILDE
 template <class T> template <typename S> Image<S> Image<T>::convert() const {
     Image<S> new_image(width, height, channels);
     for(int j=0;j<height;j++)
@@ -216,10 +216,11 @@ template <class T> template <typename S> Image<S> Image<T>::convert() const {
         
     return new_image;
 }
-
+//MATILDE
 template <class T> Image<T> Image<T>::to_grayscale() const {
     if (channels == 1) return convert<T>();
     Image<T> image(width, height, 1);
+    #pragma omp parallel for collapse(2)
     for(int j=0;j<height;j++){
         for(int i=0;i<width;i++){
             image.set(j, i, 0, (T)((0.299 * this->get(j, i, 0) + (0.587 * this->get(j, i, 1)) + (0.114 * this->get(j,i,2)))));
