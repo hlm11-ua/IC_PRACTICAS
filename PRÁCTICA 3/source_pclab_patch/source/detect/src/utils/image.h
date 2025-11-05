@@ -178,11 +178,13 @@ template <class T> Image<T> Image<T>::abs() const {
         
     return new_image;
 }
-
+//MATILDE
 template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) const {
     assert(kernel.width%2 != 0 && kernel.height%2 != 0 && kernel.width == kernel.height && kernel.channels==1);
     int kernel_size = kernel.width;
     Image<T> convolved(width, height, channels);
+    #pragma omp parallel for collapse(3)
+    //en este caso es collapse(3) y no 5 || 3 bucles independientes (j,i,c) y 2 que no (u,v)
     for(int j=0;j<height;j++){
         for(int i=0;i<width; i++){
             for(int c=0;c<channels;c++){
@@ -205,6 +207,7 @@ template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) co
 //MATILDE
 template <class T> template <typename S> Image<S> Image<T>::convert() const {
     Image<S> new_image(width, height, channels);
+    #pragma omp parallel for collapse(3)
     for(int j=0;j<height;j++)
     {
         for(int i=0;i<width;i++){
