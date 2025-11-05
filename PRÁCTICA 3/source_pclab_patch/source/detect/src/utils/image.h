@@ -194,20 +194,31 @@ template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) co
     return convolved;
 }
 
+//MATILDE
 template <class T> template <typename S> Image<S> Image<T>::convert() const {
     Image<S> new_image(width, height, channels);
-    for(int j=0;j<height;j++)
-    {
-        for(int i=0;i<width;i++){
-            for(int c=0;c<channels;c++){
-                new_image.set(j, i, c, (T)this->get(j, i, c));
+
+    auto start = [this, &new_image](int row_begin, int row_end) {
+        for (int j = row_begin; j < row_end; ++j) {
+            for (int i = 0; i < width; ++i) {
+                for (int c = 0; c < channels; ++c) {
+                    new_image.set(j, i, c, static_cast<S>(this->get(j, i, c)));
+                }
             }
-        }    
-    }
-        
+        }
+    };
+
+    int mid = height / 2; //Dividimos entre dos mitades para lanzar dos tareas
+    std::future<void> task1 = std::async(std::launch::async, start, 0, mid);
+    std::future<void> task2 = std::async(std::launch::async, start, mid, height);
+
+    task1.wait();
+    task2.get();
+
     return new_image;
 }
 
+//MATILDE
 template <class T> Image<T> Image<T>::to_grayscale() const {
     if (channels == 1) return convert<T>();
     Image<T> image(width, height, 1);
