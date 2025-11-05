@@ -92,7 +92,7 @@ float **dct::create_matrix(int x_size, int y_size){
     float **m = new float*[x_size]; //(float**)calloc(dimX, sizeof(float*));
     float *p = new float[x_size*y_size];//(float*)calloc(dimX*dimY, sizeof(float));
 
-    # pragma omp parallel for
+    #pragma omp parallel for collapse(1)
     for(int i=0; i<x_size;i++){
         m[i] = &p[i*y_size];
     }
