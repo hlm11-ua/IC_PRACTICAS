@@ -252,28 +252,35 @@ template <class T> Image<T> Image<T>::abs() const {
 
     return new_image;
 }
-
+//MATILDE
 template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) const {
-    assert(kernel.width%2 != 0 && kernel.height%2 != 0 && kernel.width == kernel.height && kernel.channels==1);
-    int kernel_size = kernel.width;
+    assert(kernel.width%2!=0 && kernel.height%2!=0 && kernel.width==kernel.height && kernel.channels==1);
+    int k = kernel.width;
     Image<T> convolved(width, height, channels);
-    for(int j=0;j<height;j++){
-        for(int i=0;i<width; i++){
-            for(int c=0;c<channels;c++){
-                float sum = 0.0;
-                for(int u=0;u<kernel_size;u++){
-                    for(int v=0;v<kernel_size;v++){
-                        int s = (j + u - kernel_size/2)%height;
-                        int t = (i + v - kernel_size/2)%width;
-                        if (s < 0 || s >= height || t < 0 || t >= width)
-                            continue;
-                        sum += (this->get(s, t, c) * kernel.get(u,v, 0));
+
+    auto start = [this, &kernel, &convolved, k](int row_begin, int row_end) {
+        for (int j=row_begin; j<row_end; ++j) {
+            for (int i=0; i<width; ++i) {
+                for (int c=0; c<channels; ++c) {
+                    float sum = 0.0;
+                    for (int u=0; u<k; ++u) {
+                        for (int v=0; v<k; ++v) {
+                            int s = j + u - k/2;
+                            int t = i + v - k/2;
+                            if (s<0 || s>=height || t<0 || t>=width) continue;
+                            sum += this->get(s, t, c) * kernel.get(u, v, 0);
+                        }
                     }
+                    convolved.set(j, i, c, (T)(sum / (k*k)));
                 }
-                convolved.set(j, i, 0, (T)sum/(kernel_size*kernel_size));
             }
         }
-    }
+    };
+
+    int mid = height/2;
+    auto f1 = std::async(std::launch::async, start, 0, mid);
+    auto f2 = std::async(std::launch::async, start, mid, height);
+    f1.get(); f2.get();
     return convolved;
 }
 
@@ -301,17 +308,31 @@ template <class T> template <typename S> Image<S> Image<T>::convert() const {
     return new_image;
 }
 
+
 //MATILDE
 template <class T> Image<T> Image<T>::to_grayscale() const {
     if (channels == 1) return convert<T>();
     Image<T> image(width, height, 1);
-    for(int j=0;j<height;j++){
-        for(int i=0;i<width;i++){
-            image.set(j, i, 0, (T)((0.299 * this->get(j, i, 0) + (0.587 * this->get(j, i, 1)) + (0.114 * this->get(j,i,2)))));
+    auto start = [this, &image](int row_begin, int row_end) {
+        for (int j = row_begin; j < row_end; ++j) {
+            for (int i = 0; i < width; ++i) {
+                image.set(j, i, 0,
+                    (T)(0.299f * this->get(j, i, 0) + 0.587f * this->get(j, i, 1) +  0.114f * this->get(j, i, 2)));
+            }
         }
-    }
+    };
+
+    int mid = height / 2; // Dividimos en dos mitades
+    std::future<void> task1 = std::async(std::launch::async, start, 0, mid);
+    std::future<void> task2 = std::async(std::launch::async, start, mid, height);
+
+    task1.wait();
+    task2.get();
+
     return image;
 }
+
+// ...existing code...
 template <class T> Image<float> Image<T>::normalized() const {
     Image<float> new_image(width, height, channels);
     float max_value = -999999999;
