@@ -332,7 +332,6 @@ template <class T> Image<T> Image<T>::to_grayscale() const {
     return image;
 }
 
-// ...existing code...
 template <class T> Image<float> Image<T>::normalized() const {
     Image<float> new_image(width, height, channels);
     float max_value = -999999999;
