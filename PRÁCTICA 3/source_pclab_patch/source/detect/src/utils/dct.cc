@@ -63,16 +63,36 @@ void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, floa
 }
 
 void dct::normalize(float **DCTMatrix, int size){
-    float max_v=-99999999.0, min_v=999999999.0;
-    for (int i=0;i<size;i++){
-        for (int j=0;j<size;j++){
-            if (DCTMatrix[i][j] < min_v) min_v=DCTMatrix[i][j];
-            if (DCTMatrix[i][j] > max_v) max_v=DCTMatrix[i][j];
+    float min_v = 999999999.0f;
+    float max_v = -99999999.0f;
+
+    // Parallel reduction to find global min and max
+    #pragma omp parallel for reduction(min:min_v) reduction(max:max_v) collapse(2)
+    for (int i = 0; i < size; i++){
+        for (int j = 0; j < size; j++){
+            float v = DCTMatrix[i][j];
+            if (v < min_v) min_v = v;
+            if (v > max_v) max_v = v;
         }
     }
-    for (int i=0;i<size;i++){
-        for (int j=0;j<size;j++){
-            DCTMatrix[i][j] = 255.0 * (DCTMatrix[i][j] -min_v)/ (max_v - min_v);
+
+    float denom = max_v - min_v;
+    if (denom <= 1e-12f) {
+        // Constant matrix: avoid division by zero. Map all to 0.
+        #pragma omp parallel for collapse(2)
+        for (int i = 0; i < size; i++){
+            for (int j = 0; j < size; j++){
+                DCTMatrix[i][j] = 0.0f;
+            }
+        }
+        return;
+    }
+
+    // Parallel scaling to [0,255]
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < size; i++){
+        for (int j = 0; j < size; j++){
+            DCTMatrix[i][j] = 255.0f * (DCTMatrix[i][j] - min_v) / denom;
         }
     }
 }

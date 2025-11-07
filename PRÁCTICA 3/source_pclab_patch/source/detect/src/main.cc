@@ -64,13 +64,15 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
 
-    for(int i=0;i<blocks.size();i++){
+        // Paraleliza el procesado por bloques (cada iteración es independiente)
+        #pragma omp parallel for schedule(static)
+        for(int i=0;i<(int)blocks.size();i++){
         float **dctBlock = dct::create_matrix(block_size, block_size);
         dct::direct(dctBlock, blocks[i], 0);
         if (invert) {
-          for(int k=0;k<blocks[i].size/2;k++)
-            for(int l=0;l<blocks[i].size/2;l++)
-              dctBlock[k][l] = 0.0;
+                    for(int k=0;k<blocks[i].size/2;k++)
+                        for(int l=0;l<blocks[i].size/2;l++)
+                            dctBlock[k][l] = 0.0;
           dct::inverse(blocks[i], dctBlock, 0, 0.0, 255.);
         }else dct::assign(dctBlock, blocks[i], 0);
         dct::delete_matrix(dctBlock);
