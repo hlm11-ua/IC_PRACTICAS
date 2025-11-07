@@ -1,6 +1,10 @@
 #include "dct.h"
 #include "image.h"
 #include <math.h>
+#include <future>
+#include <thread>
+#include <algorithm>
+#include <limits>
 
 void dct::direct(float **dct, const Block<float> &matrix, int channel)
 {
@@ -72,18 +76,75 @@ void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, floa
 }
  
 void dct::normalize(float **DCTMatrix, int size){
-    float max_v=-99999999.0, min_v=999999999.0;
-    for (int i=0;i<size;i++){
-        for (int j=0;j<size;j++){
-            if (DCTMatrix[i][j] < min_v) min_v=DCTMatrix[i][j];
-            if (DCTMatrix[i][j] > max_v) max_v=DCTMatrix[i][j];
-        }
+    // 1) Reducir min y max en paralelo por bloques de filas
+    int num_tasks = std::thread::hardware_concurrency();
+    if (num_tasks <= 0) num_tasks = 4;
+    if (num_tasks > size) num_tasks = size; // no más tareas que filas
+    const int rows_per_task = (size + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<std::pair<float,float>>> futures;
+    futures.reserve(num_tasks);
+    for (int t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, size);
+        if (start_row >= end_row) break;
+        futures.emplace_back(std::async(std::launch::async, [=]() -> std::pair<float,float> {
+            float local_min = std::numeric_limits<float>::infinity();
+            float local_max = -std::numeric_limits<float>::infinity();
+            for (int i = start_row; i < end_row; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    float v = DCTMatrix[i][j];
+                    if (v < local_min) local_min = v;
+                    if (v > local_max) local_max = v;
+                }
+            }
+            return {local_min, local_max};
+        }));
     }
-    for (int i=0;i<size;i++){
-        for (int j=0;j<size;j++){
-            DCTMatrix[i][j] = 255.0 * (DCTMatrix[i][j] -min_v)/ (max_v - min_v);
-        }
+
+    float min_v = std::numeric_limits<float>::infinity();
+    float max_v = -std::numeric_limits<float>::infinity();
+    for (auto &f : futures) {
+        auto [lmin, lmax] = f.get();
+        if (lmin < min_v) min_v = lmin;
+        if (lmax > max_v) max_v = lmax;
     }
+
+    const float denom = max_v - min_v;
+    if (!(denom > 0.0f)) {
+        // Matriz constante: asignar 0
+        std::vector<std::future<void>> zero_tasks;
+        zero_tasks.reserve(num_tasks);
+        for (int t = 0; t < num_tasks; ++t) {
+            int start_row = t * rows_per_task;
+            int end_row = std::min(start_row + rows_per_task, size);
+            if (start_row >= end_row) break;
+            zero_tasks.emplace_back(std::async(std::launch::async, [=]() {
+                for (int i = start_row; i < end_row; ++i)
+                    for (int j = 0; j < size; ++j)
+                        DCTMatrix[i][j] = 0.0f;
+            }));
+        }
+        for (auto &f : zero_tasks) f.get();
+        return;
+    }
+
+    // 2) Escalado paralelo a [0,255]
+    std::vector<std::future<void>> scale_tasks;
+    scale_tasks.reserve(num_tasks);
+    for (int t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, size);
+        if (start_row >= end_row) break;
+        scale_tasks.emplace_back(std::async(std::launch::async, [=]() {
+            for (int i = start_row; i < end_row; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    DCTMatrix[i][j] = 255.0f * (DCTMatrix[i][j] - min_v) / denom;
+                }
+            }
+        }));
+    }
+    for (auto &f : scale_tasks) f.get();
 }
 
 void dct::assign(float **DCTMatrix, Block<float> &block, int channel) {

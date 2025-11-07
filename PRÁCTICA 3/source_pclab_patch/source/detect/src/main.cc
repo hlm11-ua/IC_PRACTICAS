@@ -10,6 +10,7 @@
 #include "utils/dct.h"
 #include <string>
 #include <chrono>
+#include <future>
 
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
@@ -74,17 +75,37 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
 
-    for(int i=0;i<blocks.size();i++){
-        float **dctBlock = dct::create_matrix(block_size, block_size);
-        dct::direct(dctBlock, blocks[i], 0);
-        if (invert) {
-          for(int k=0;k<blocks[i].size/2;k++)
-            for(int l=0;l<blocks[i].size/2;l++)
-              dctBlock[k][l] = 0.0;
-          dct::inverse(blocks[i], dctBlock, 0, 0.0, 255.);
-        }else dct::assign(dctBlock, blocks[i], 0);
-        dct::delete_matrix(dctBlock);
+    // Paraleliza por bloques usando std::async con partición en chunks para limitar la sobrecarga
+    const int total = static_cast<int>(blocks.size());
+    int num_tasks = std::thread::hardware_concurrency();
+    if (num_tasks <= 0) num_tasks = 4;
+    if (num_tasks > total) num_tasks = std::max(1, total); // no más tareas que bloques
+    const int chunk = (total + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<void>> tasks;
+    tasks.reserve(num_tasks);
+    for (int t = 0; t < num_tasks; ++t) {
+        int start = t * chunk;
+        int end = std::min(start + chunk, total);
+        if (start >= end) break;
+        tasks.emplace_back(std::async(std::launch::async, [&, start, end]() {
+            for (int i = start; i < end; ++i) {
+                float **dctBlock = dct::create_matrix(block_size, block_size);
+                dct::direct(dctBlock, blocks[i], 0);
+                if (invert) {
+                    for (int k = 0; k < blocks[i].size / 2; k++)
+                        for (int l = 0; l < blocks[i].size / 2; l++)
+                            dctBlock[k][l] = 0.0f;
+                    dct::inverse(blocks[i], dctBlock, 0, 0.0f, 255.0f);
+                } else {
+                    dct::assign(dctBlock, blocks[i], 0);
+                }
+                dct::delete_matrix(dctBlock);
+            }
+        }));
     }
+
+    for (auto &f : tasks) f.get();
     Image<unsigned char> result = grayscale.convert<unsigned char>();
     auto end = std::chrono::steady_clock::now();
     std::cout<<"DCT elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
