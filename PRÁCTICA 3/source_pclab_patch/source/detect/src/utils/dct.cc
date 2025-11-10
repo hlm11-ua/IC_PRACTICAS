@@ -6,19 +6,25 @@
 #include <algorithm>
 #include <limits>
 
-void dct::direct(float **dct, const Block<float> &matrix, int channel)
-{
+// HELENA
+void dct::direct(float **dct, const Block<float> &matrix, int channel) {
     int m = matrix.size;
     int n = m;
+
+    std::vector<std::future<void>> tareas;
 
     float ci, cj, dct1;
 
     for (int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) {
-            if (i == 0)
+        tareas.push_back(std::async(std::launch::async, [&, i](){
+
+        if (i == 0)
                 ci = 1 / sqrt(m);
             else
                 ci = sqrt(2) / sqrt(m);
+
+        for (int j = 0; j < n; j++) {
+            
             if (j == 0)
                 cj = 1 / sqrt(n);
             else
@@ -34,8 +40,14 @@ void dct::direct(float **dct, const Block<float> &matrix, int channel)
             }
             dct[i][j] = ci * cj * sum;
         }
+    }));
+
     }
+
+    for(auto &t : tareas)
+    t.get();
 }
+
 void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max) {
     int size = idctMatrix.size;
     int num_tasks = std::thread::hardware_concurrency();
@@ -173,9 +185,11 @@ void dct::assign(float **DCTMatrix, Block<float> &block, int channel) {
     }
 }
 
+// HELENA
 float **dct::create_matrix(int x_size, int y_size){
     float **m = new float*[x_size]; //(float**)calloc(dimX, sizeof(float*));
     float *p = new float[x_size*y_size];//(float*)calloc(dimX*dimY, sizeof(float));
+
     for(int i=0; i<x_size;i++){
         m[i] = &p[i*y_size];
     }
