@@ -358,22 +358,34 @@ template <class T> Image<float> Image<T>::normalized() const {
     return new_image;
 }
 
+// HELENA
 template <class T> std::vector<Block<T>> Image<T>::get_blocks(int block_size) {
   	int depth = channels;
   	assert(width % block_size == 0 || height % block_size == 0);
-  	std::vector<Block<T>> blocks;
-  	for (int row=0;row<height;row+=block_size)
+  	std::vector<std::future<Block<T>>> tareas;
+
+  	for (int row=0;row<height;row+=block_size){
   		for(int col=0;col<width;col+=block_size){
-  			Block<T> b;
-  			b.i=col;
-  			b.j=row;
-  			b.size=block_size;
-  			b.rowsize=width*channels;
-  			b.matrix=this;
-  			b.depth=depth;
-  			blocks.push_back(b);
+            tareas.push_back(std::async(std::launch::async, [=]()-> Block<T>{
+                Block<T> b;
+                b.i=col;
+                b.j=row;
+                b.size=block_size;
+                b.rowsize=width*channels;
+                b.matrix=this;
+                b.depth=depth;
+                return b;
+            }));
   		}
-  	return blocks;
+    }
+
+    std::vector<Block<T>> blocks;
+    blocks.reserve(tareas.size());
+    for (auto &t : tareas){
+        blocks.push_back(t.get());
+    }
+
+    return blocks;
 }
 
 #endif
