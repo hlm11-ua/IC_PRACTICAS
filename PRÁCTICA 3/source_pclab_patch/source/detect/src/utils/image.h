@@ -6,6 +6,7 @@
 #include "assert.h"
 #include <string>
 #include <omp.h>
+#include <future>
 
 template <typename T> class Block;
 
@@ -264,11 +265,11 @@ template <class T> Image<float> Image<T>::normalized() const {
 template <class T> std::vector<Block<T>> Image<T>::get_blocks(int block_size) {
   	int depth = channels;
   	assert(width % block_size == 0 || height % block_size == 0);
-  	std::vector<Block<T>> blocks;
+  	std::vector<std::future<Block<T>>> tareas;
 
   	for (int row=0;row<height;row+=block_size){
   		for(int col=0;col<width;col+=block_size){
-            tareas.push_back(std::async(std::launch::async, [=](){
+            tareas.push_back(std::async(std::launch::async, [=]()-> Block<T>{
                 Block<T> b;
                 b.i=col;
                 b.j=row;
@@ -276,7 +277,7 @@ template <class T> std::vector<Block<T>> Image<T>::get_blocks(int block_size) {
                 b.rowsize=width*channels;
                 b.matrix=this;
                 b.depth=depth;
-                blocks.push_back(b);
+                return b;
             }));
   		}
     }
