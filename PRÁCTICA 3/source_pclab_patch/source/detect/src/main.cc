@@ -131,22 +131,14 @@ int main(int argc, char **argv) {
         std::cerr<<"Image filename missing from arguments. Usage ./dct <filename>"<<std::endl;
         exit(1);
     }
-    int block_size = 8;
+    int block_size=8;
     Image<unsigned char> image = load_from_file(argv[1]);
-
-    // Lanzamos tareas async para que se ejecuten en paralelo
-    auto srm3x3_future = std::async(std::launch::async, compute_srm, std::ref(image), 3);
-    auto srm5x5_future = std::async(std::launch::async, compute_srm, std::ref(image), 5);
-    auto ela_future = std::async(std::launch::async, compute_ela, std::ref(image), 90);
-    auto dct_invert_future = std::async(std::launch::async, compute_dct, std::ref(image), block_size, true);
-    auto dct_direct_future = std::async(std::launch::async, compute_dct, std::ref(image), block_size, false);
-
-    // Esperamos resultados y guardamos las imágenes
-    save_to_file("srm_kernel_3x3.png", srm3x3_future.get());
-    save_to_file("srm_kernel_5x5.png", srm5x5_future.get());
-    save_to_file("ela.png", ela_future.get());
-    save_to_file("dct_invert.png", dct_invert_future.get());
-    save_to_file("dct_direct.png", dct_direct_future.get());
+    Image<unsigned char> srm3x3 = compute_srm(image, 3);
+    save_to_file("srm_kernel_3x3.png", srm3x3);
+    save_to_file("srm_kernel_5x5.png", compute_srm(image, 5));
+    save_to_file("ela.png", compute_ela(image, 90));
+    save_to_file("dct_invert.png", compute_dct(image, block_size, true));
+    save_to_file("dct_direct.png", compute_dct(image, block_size, false));
 
     return 0;
 }
