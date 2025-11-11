@@ -43,8 +43,6 @@ void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, floa
         for (int j = 0; j < size; ++j) {
             float sum = 0.0f;
 
-            // Bucles u y v usan la misma variable: Sum -> No paralelizar
-            // #pragma omp parallel for reduction(+:sum) collapse(2)
             for (int u = 0; u < size; u++) {
                 for (int v = 0; v < size; v++) {
                     float Cu = (u == 0) ? 1.0f / sqrtf(2.0f) : 1.0f;
@@ -66,7 +64,6 @@ void dct::normalize(float **DCTMatrix, int size){
     float min_v = 999999999.0f;
     float max_v = -99999999.0f;
 
-    // Parallel reduction to find global min and max
     #pragma omp parallel for reduction(min:min_v) reduction(max:max_v) collapse(2)
     for (int i = 0; i < size; i++){
         for (int j = 0; j < size; j++){
@@ -78,7 +75,6 @@ void dct::normalize(float **DCTMatrix, int size){
 
     float denom = max_v - min_v;
     if (denom <= 1e-12f) {
-        // Constant matrix: avoid division by zero. Map all to 0.
         #pragma omp parallel for collapse(2)
         for (int i = 0; i < size; i++){
             for (int j = 0; j < size; j++){
@@ -88,7 +84,6 @@ void dct::normalize(float **DCTMatrix, int size){
         return;
     }
 
-    // Parallel scaling to [0,255]
     #pragma omp parallel for collapse(2)
     for (int i = 0; i < size; i++){
         for (int j = 0; j < size; j++){
