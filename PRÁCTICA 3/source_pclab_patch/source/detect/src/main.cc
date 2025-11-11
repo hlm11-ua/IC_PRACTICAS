@@ -32,11 +32,41 @@ Image<float> get_srm_3x3() {
 
 Image<float> get_srm_5x5() {
     Image<float> kernel(5, 5, 1);
-    kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -2); kernel.set(0, 3, 0, 2); kernel.set(0, 4, 0, -1);
-    kernel.set(1, 0, 0, 2); kernel.set(1, 1, 0, -6); kernel.set(1, 2, 0, 8); kernel.set(1, 3, 0, -6); kernel.set(1, 4, 0, 2);
-    kernel.set(2, 0, 0, -2); kernel.set(2, 1, 0, 8); kernel.set(2, 2, 0, -12); kernel.set(2, 3, 0, 8); kernel.set(2, 4, 0, -2);
-    kernel.set(3, 0, 0, 2); kernel.set(3, 1, 0, -6); kernel.set(3, 2, 0, 8); kernel.set(3, 3, 0, -6); kernel.set(3, 4, 0, 2);
-    kernel.set(4, 0, 0, -1); kernel.set(4, 1, 0, 2); kernel.set(4, 2, 0, -2); kernel.set(4, 3, 0, 2); kernel.set(4, 4, 0, -1);
+    std::vector<std::future<void>> futures;
+
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 0, 0, -1); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 1, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 2, 0, -2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 3, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(0, 4, 0, -1); }));
+    
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 0, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 1, 0, -6); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 2, 0,  8); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 3, 0, -6); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(1, 4, 0,  2); }));
+
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 0, 0, -2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 1, 0,  8); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 2, 0, -12); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 3, 0,  8); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(2, 4, 0, -2); }));
+    
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(3, 0, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(3, 1, 0, -6); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(3, 2, 0,  8); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(3, 3, 0, -6); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(3, 4, 0,  2); }));
+    
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(4, 0, 0, -1); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(4, 1, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(4, 2, 0, -2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(4, 3, 0,  2); }));
+    futures.push_back(std::async(std::launch::async, [&]() { kernel.set(4, 4, 0, -1); }));
+
+    for (auto& f : futures)
+        f.get();
+
     return kernel;
 }
 
@@ -54,15 +84,30 @@ Image<float> get_srm_kernel(int size) {
 
 Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_size) {
     auto begin = std::chrono::steady_clock::now();
-    std::cout<<"Computing SRM "<<kernel_size<<"x"<<kernel_size<<"..."<<std::endl;          
+    std::cout<<"Computing SRM "<<kernel_size<<"x"<<kernel_size<<"..."<<std::endl;
+
+    // --- Medición 1: Preprocesamiento (Grises, Convertir a Float) ---
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> srm = image.to_grayscale().convert<float>();
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Preproc (Grayscale/Convert): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
+
+    // --- Medición 2: Convolución (SRM) ---
+    auto t2_start = std::chrono::steady_clock::now();
     srm = srm.convolution(get_srm_kernel(kernel_size));
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Convolution: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
+    
+    // --- Medición 3: Postprocesamiento (Abs, Normalize, Escalar) ---
+    auto t3_start = std::chrono::steady_clock::now();
     srm = srm.abs().normalized();
     srm = srm * 255;
     Image<unsigned char> result = srm.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Postproc (Abs/Norm/Scale/Convert): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count()<<"ms"<<std::endl;
     
     auto end = std::chrono::steady_clock::now();
-    std::cout<<"SRM elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
+    std::cout<<"SRM elapsed time (Total): "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
     return result;
 }
 
@@ -72,14 +117,20 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     if (invert) std::cout<<" inverse";
     else std::cout<<" direct";
     std::cout<<" DCT "<<block_size<<"x"<<block_size<<"..."<<std::endl;
+
+    // --- Medición 1: Preprocesamiento (Grises, Convertir, Obtener Bloques) ---
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Preproc (Grayscale/Blocks): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
 
-    // Paraleliza por bloques usando std::async con partición en chunks para limitar la sobrecarga
+    // --- Medición 2: Paralelización / Transformación DCT ---
+    auto t2_start = std::chrono::steady_clock::now();
     const int total = static_cast<int>(blocks.size());
     int num_tasks = std::thread::hardware_concurrency();
     if (num_tasks <= 0) num_tasks = 4;
-    if (num_tasks > total) num_tasks = std::max(1, total); // no más tareas que bloques
+    if (num_tasks > total) num_tasks = std::max(1, total);
     const int chunk = (total + num_tasks - 1) / num_tasks;
 
     std::vector<std::future<void>> tasks;
@@ -91,7 +142,8 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
         tasks.emplace_back(std::async(std::launch::async, [&, start, end]() {
             for (int i = start; i < end; ++i) {
                 float **dctBlock = dct::create_matrix(block_size, block_size);
-                dct::direct(dctBlock, blocks[i], 0);
+                // NOTA: dct::direct e dct::inverse DEBERÍAN tener sus propios tiempos si se implementaron en paralelo
+                dct::direct(dctBlock, blocks[i], 0); 
                 if (invert) {
                     for (int k = 0; k < blocks[i].size / 2; k++)
                         for (int l = 0; l < blocks[i].size / 2; l++)
@@ -106,23 +158,47 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     }
 
     for (auto &f : tasks) f.get();
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Parallel DCT/IDCT blocks: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
+    
+    // --- Medición 3: Postprocesamiento (Convertir a unsigned char) ---
+    auto t3_start = std::chrono::steady_clock::now();
     Image<unsigned char> result = grayscale.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Postproc (Final Convert): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count()<<"ms"<<std::endl;
+
     auto end = std::chrono::steady_clock::now();
-    std::cout<<"DCT elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
+    std::cout<<"DCT elapsed time (Total): "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
     return result;
 }
 
 Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality){
     std::cout<<"Computing ELA..."<<std::endl;
     auto begin = std::chrono::steady_clock::now();
+
+    // --- Medición 1: Preprocesamiento (Grises y Guardado JPEG) ---
+    auto t1_start = std::chrono::steady_clock::now();
     Image<unsigned char> grayscale = image.to_grayscale();
-    save_to_file("_temp.jpg", grayscale, quality);
-    Image<float> compressed = load_from_file("_temp.jpg").convert<float>();
+    save_to_file("_temp.jpg", grayscale, quality); // I/O
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Preproc (Grayscale/Save Temp JPEG): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
+    
+    // --- Medición 2: Carga de imagen comprimida y resta ---
+    auto t2_start = std::chrono::steady_clock::now();
+    Image<float> compressed = load_from_file("_temp.jpg").convert<float>(); // I/O y conversión
     compressed = compressed + (grayscale.convert<float>()*(-1));
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Load/Convert/Subtract: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
+    
+    // --- Medición 3: Postprocesamiento (Abs, Normalize, Escalar) ---
+    auto t3_start = std::chrono::steady_clock::now();
     compressed = compressed.abs().normalized() * 255;
     Image<unsigned char> result = compressed.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout<<"  -> Postproc (Abs/Norm/Scale/Convert): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count()<<"ms"<<std::endl;
+    
     auto end = std::chrono::steady_clock::now();
-    std::cout<<"ELA elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
+    std::cout<<"ELA elapsed time (Total): "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
     return result;
 }
 

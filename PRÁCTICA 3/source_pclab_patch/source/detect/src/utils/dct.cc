@@ -5,9 +5,12 @@
 #include <thread>
 #include <algorithm>
 #include <limits>
+#include <iostream>
+#include <chrono>
 
 // HELENA
 void dct::direct(float **dct, const Block<float> &matrix, int channel) {
+
     int m = matrix.size;
     int n = m;
 
@@ -17,48 +20,48 @@ void dct::direct(float **dct, const Block<float> &matrix, int channel) {
 
     for (int i = 0; i < m; i++) {
         tareas.push_back(std::async(std::launch::async, [&, i](){
-
-        if (i == 0)
+            if (i == 0)
                 ci = 1 / sqrt(m);
             else
                 ci = sqrt(2) / sqrt(m);
 
-        for (int j = 0; j < n; j++) {
-            
-            if (j == 0)
-                cj = 1 / sqrt(n);
-            else
-                cj = sqrt(2) / sqrt(n);
+            for (int j = 0; j < n; j++) {
+                
+                if (j == 0)
+                    cj = 1 / sqrt(n);
+                else
+                    cj = sqrt(2) / sqrt(n);
 
-            float sum = 0;
-            for (int k = 0; k < m; k++) {
-                for (int l = 0; l < n; l++) {
-                    sum += matrix.get_pixel(k, l, channel) * 
-                           cos((2 * k + 1) * i * M_PI / (2 * m)) * 
-                           cos((2 * l + 1) * j * M_PI / (2 * n));
+                float sum = 0;
+                for (int k = 0; k < m; k++) {
+                    for (int l = 0; l < n; l++) {
+                        sum += matrix.get_pixel(k, l, channel) * cos((2 * k + 1) * i * M_PI / (2 * m)) * cos((2 * l + 1) * j * M_PI / (2 * n));
+                    }
                 }
+                dct[i][j] = ci * cj * sum;
             }
-            dct[i][j] = ci * cj * sum;
-        }
-    }));
-
+        }));
     }
 
     for(auto &t : tareas)
-    t.get();
+        t.get();
+
 }
 
 void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, float min, float max) {
+
     int size = idctMatrix.size;
     int num_tasks = std::thread::hardware_concurrency();
     if (num_tasks == 0) num_tasks = 4;
 
     const int rows_per_task = (size + num_tasks - 1) / num_tasks;
     std::vector<std::future<void>> tasks;
+    tasks.reserve(num_tasks);
 
     for (int t = 0; t < num_tasks; ++t) {
         int start_row = t * rows_per_task;
         int end_row = std::min(start_row + rows_per_task, size);
+        if (start_row >= end_row) break;
 
         tasks.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
             for (int i = start_row; i < end_row; ++i) {
@@ -81,17 +84,17 @@ void dct::inverse(Block<float> &idctMatrix, float **dctMatrix, int channel, floa
         }));
     }
 
-    // Esperar a que todas las tareas terminen
     for (auto &task : tasks) {
         task.get();
     }
 }
  
 void dct::normalize(float **DCTMatrix, int size){
-    // 1) Reducir min y max en paralelo por bloques de filas
+    auto begin = std::chrono::steady_clock::now();
+
     int num_tasks = std::thread::hardware_concurrency();
     if (num_tasks <= 0) num_tasks = 4;
-    if (num_tasks > size) num_tasks = size; // no más tareas que filas
+    if (num_tasks > size) num_tasks = size;
     const int rows_per_task = (size + num_tasks - 1) / num_tasks;
 
     std::vector<std::future<std::pair<float,float>>> futures;
@@ -124,7 +127,6 @@ void dct::normalize(float **DCTMatrix, int size){
 
     const float denom = max_v - min_v;
     if (!(denom > 0.0f)) {
-        // Matriz constante: asignar 0
         std::vector<std::future<void>> zero_tasks;
         zero_tasks.reserve(num_tasks);
         for (int t = 0; t < num_tasks; ++t) {
@@ -138,10 +140,12 @@ void dct::normalize(float **DCTMatrix, int size){
             }));
         }
         for (auto &f : zero_tasks) f.get();
+        
+        auto end = std::chrono::steady_clock::now(); 
+        std::cout << "  [DCT] normalize elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
         return;
     }
 
-    // 2) Escalado paralelo a [0,255]
     std::vector<std::future<void>> scale_tasks;
     scale_tasks.reserve(num_tasks);
     for (int t = 0; t < num_tasks; ++t) {
@@ -157,19 +161,25 @@ void dct::normalize(float **DCTMatrix, int size){
         }));
     }
     for (auto &f : scale_tasks) f.get();
+
+    auto end = std::chrono::steady_clock::now(); 
+    std::cout << "  [DCT] normalize elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
 }
 
 void dct::assign(float **DCTMatrix, Block<float> &block, int channel) {
+
     int size = block.size;
     int num_tasks = std::thread::hardware_concurrency();
     if (num_tasks == 0) num_tasks = 4;
 
     const int rows_per_task = (size + num_tasks - 1) / num_tasks;
     std::vector<std::future<void>> tasks;
+    tasks.reserve(num_tasks);
 
     for (int t = 0; t < num_tasks; ++t) {
         int start_row = t * rows_per_task;
         int end_row = std::min(start_row + rows_per_task, size);
+        if (start_row >= end_row) break;
 
         tasks.push_back(std::async(std::launch::async, [&, start_row, end_row]() {
             for (int i = start_row; i < end_row; ++i) {

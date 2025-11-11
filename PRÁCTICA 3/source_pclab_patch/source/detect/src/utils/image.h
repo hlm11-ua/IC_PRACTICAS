@@ -253,34 +253,53 @@ template <class T> Image<T> Image<T>::abs() const {
     return new_image;
 }
 //MATILDE
-template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) const {
-    assert(kernel.width%2!=0 && kernel.height%2!=0 && kernel.width==kernel.height && kernel.channels==1);
+template <class T>
+Image<T> Image<T>::convolution(const Image<float> &kernel) const {
+    assert(kernel.width % 2 != 0 && kernel.height % 2 != 0 && kernel.width == kernel.height && kernel.channels == 1);
+    
     int k = kernel.width;
     Image<T> convolved(width, height, channels);
 
     auto start = [this, &kernel, &convolved, k](int row_begin, int row_end) {
-        for (int j=row_begin; j<row_end; ++j) {
-            for (int i=0; i<width; ++i) {
-                for (int c=0; c<channels; ++c) {
+        for (int j = row_begin; j < row_end; ++j) {
+            for (int i = 0; i < width; ++i) {
+                for (int c = 0; c < channels; ++c) {
                     float sum = 0.0;
-                    for (int u=0; u<k; ++u) {
-                        for (int v=0; v<k; ++v) {
-                            int s = j + u - k/2;
-                            int t = i + v - k/2;
-                            if (s<0 || s>=height || t<0 || t>=width) continue;
+                    for (int u = 0; u < k; ++u) {
+                        for (int v = 0; v < k; ++v) {
+                            int s = j + u - k / 2;
+                            int t = i + v - k / 2;
+                            if (s < 0 || s >= height || t < 0 || t >= width) continue;
                             sum += this->get(s, t, c) * kernel.get(u, v, 0);
                         }
                     }
-                    convolved.set(j, i, c, (T)(sum / (k*k)));
+                    convolved.set(j, i, c, (T)(sum / (k * k))); 
                 }
             }
         }
     };
 
-    int mid = height/2;
-    auto f1 = std::async(std::launch::async, start, 0, mid);
-    auto f2 = std::async(std::launch::async, start, mid, height);
-    f1.get(); f2.get();
+    const unsigned num_threads = std::thread::hardware_concurrency();
+    const unsigned num_tasks = (num_threads == 0) ? 4 : num_threads; 
+    
+    const int rows_per_task = (height + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_tasks);
+
+    for (unsigned t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, height);
+        if (start_row >= end_row) break;
+
+        futures.push_back(
+            std::async(std::launch::async, start, start_row, end_row)
+        );
+    }
+
+    for (auto& f : futures)
+        f.get();
+        
     return convolved;
 }
 
@@ -362,30 +381,19 @@ template <class T> Image<float> Image<T>::normalized() const {
 template <class T> std::vector<Block<T>> Image<T>::get_blocks(int block_size) {
   	int depth = channels;
   	assert(width % block_size == 0 || height % block_size == 0);
-  	std::vector<std::future<Block<T>>> tareas;
-
-  	for (int row=0;row<height;row+=block_size){
+  	std::vector<Block<T>> blocks;
+  	for (int row=0;row<height;row+=block_size)
   		for(int col=0;col<width;col+=block_size){
-            tareas.push_back(std::async(std::launch::async, [=]()-> Block<T>{
-                Block<T> b;
-                b.i=col;
-                b.j=row;
-                b.size=block_size;
-                b.rowsize=width*channels;
-                b.matrix=this;
-                b.depth=depth;
-                return b;
-            }));
+  			Block<T> b;
+  			b.i=col;
+  			b.j=row;
+  			b.size=block_size;
+  			b.rowsize=width*channels;
+  			b.matrix=this;
+  			b.depth=depth;
+  			blocks.push_back(b);
   		}
-    }
-
-    std::vector<Block<T>> blocks;
-    blocks.reserve(tareas.size());
-    for (auto &t : tareas){
-        blocks.push_back(t.get());
-    }
-
-    return blocks;
+  	return blocks;
 }
 
 #endif
