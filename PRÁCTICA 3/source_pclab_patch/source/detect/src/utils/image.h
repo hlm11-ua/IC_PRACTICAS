@@ -6,6 +6,7 @@
 #include "assert.h"
 #include <string>
 #include <omp.h>
+#include <future>
 
 template <typename T> class Block;
 
@@ -182,29 +183,53 @@ template <class T> Image<T> Image<T>::abs() const {
     return new_image;
 }
 //MATILDE
-template <class T> Image<T> Image<T>::convolution(const Image<float> &kernel) const {
-    assert(kernel.width%2 != 0 && kernel.height%2 != 0 && kernel.width == kernel.height && kernel.channels==1);
-    int kernel_size = kernel.width;
+template <class T>
+Image<T> Image<T>::convolution(const Image<float> &kernel) const {
+    assert(kernel.width % 2 != 0 && kernel.height % 2 != 0 && kernel.width == kernel.height && kernel.channels == 1);
+    
+    int k = kernel.width;
     Image<T> convolved(width, height, channels);
-    #pragma omp parallel for collapse(3)
-    //en este caso es collapse(3) y no 5 || 3 bucles independientes (j,i,c) y 2 que no (u,v)
-    for(int j=0;j<height;j++){
-        for(int i=0;i<width; i++){
-            for(int c=0;c<channels;c++){
-                float sum = 0.0;
-                for(int u=0;u<kernel_size;u++){
-                    for(int v=0;v<kernel_size;v++){
-                        int s = (j + u - kernel_size/2)%height;
-                        int t = (i + v - kernel_size/2)%width;
-                        if (s < 0 || s >= height || t < 0 || t >= width)
-                            continue;
-                        sum += (this->get(s, t, c) * kernel.get(u,v, 0));
+
+    auto start = [this, &kernel, &convolved, k](int row_begin, int row_end) {
+        for (int j = row_begin; j < row_end; ++j) {
+            for (int i = 0; i < width; ++i) {
+                for (int c = 0; c < channels; ++c) {
+                    float sum = 0.0;
+                    for (int u = 0; u < k; ++u) {
+                        for (int v = 0; v < k; ++v) {
+                            int s = j + u - k / 2;
+                            int t = i + v - k / 2;
+                            if (s < 0 || s >= height || t < 0 || t >= width) continue;
+                            sum += this->get(s, t, c) * kernel.get(u, v, 0);
+                        }
                     }
+                    convolved.set(j, i, c, (T)(sum / (k * k))); 
                 }
-                convolved.set(j, i, 0, (T)sum/(kernel_size*kernel_size));
             }
         }
+    };
+
+    const unsigned num_threads = std::thread::hardware_concurrency();
+    const unsigned num_tasks = (num_threads == 0) ? 4 : num_threads; 
+    
+    const int rows_per_task = (height + num_tasks - 1) / num_tasks;
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_tasks);
+
+    for (unsigned t = 0; t < num_tasks; ++t) {
+        int start_row = t * rows_per_task;
+        int end_row = std::min(start_row + rows_per_task, height);
+        if (start_row >= end_row) break;
+
+        futures.push_back(
+            std::async(std::launch::async, start, start_row, end_row)
+        );
     }
+
+    for (auto& f : futures)
+        f.get();
+        
     return convolved;
 }
 //MATILDE
