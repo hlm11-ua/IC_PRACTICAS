@@ -45,19 +45,16 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
     auto begin = std::chrono::steady_clock::now();
     std::cout<<"Computing SRM "<<kernel_size<<"x"<<kernel_size<<"..."<<std::endl;
     
-    // --- Medición 1: Preprocesamiento (Grises, Convertir a Float) ---
     auto t1_start = std::chrono::steady_clock::now();
     Image<float> srm = image.to_grayscale().convert<float>();
     auto t1_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Preproc (Grayscale/Convert): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
 
-    // --- Medición 2: Convolución (SRM) ---
     auto t2_start = std::chrono::steady_clock::now();
     srm = srm.convolution(get_srm_kernel(kernel_size));
     auto t2_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Convolution: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
     
-    // --- Medición 3: Postprocesamiento (Abs, Normalize, Escalar) ---
     auto t3_start = std::chrono::steady_clock::now();
     srm = srm.abs().normalized();
     srm = srm * 255;
@@ -77,14 +74,12 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     else std::cout<<" direct";
     std::cout<<" DCT "<<block_size<<"x"<<block_size<<"..."<<std::endl;
     
-    // --- Medición 1: Preprocesamiento (Grises, Convertir, Obtener Bloques) ---
     auto t1_start = std::chrono::steady_clock::now();
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
     auto t1_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Preproc (Grayscale/Blocks): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
 
-    // --- Medición 2: Procesamiento por bloques (Secuencial) ---
     auto t2_start = std::chrono::steady_clock::now();
     for(int i=0;i<blocks.size();i++){
         float **dctBlock = dct::create_matrix(block_size, block_size);
@@ -100,7 +95,6 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
     auto t2_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Sequential DCT/IDCT blocks: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
 
-    // --- Medición 3: Postprocesamiento (Convertir a unsigned char) ---
     auto t3_start = std::chrono::steady_clock::now();
     Image<unsigned char> result = grayscale.convert<unsigned char>();
     auto t3_end = std::chrono::steady_clock::now();
@@ -115,21 +109,18 @@ Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality)
     std::cout<<"Computing ELA..."<<std::endl;
     auto begin = std::chrono::steady_clock::now();
     
-    // --- Medición 1: Preprocesamiento (Grises y Guardado JPEG) ---
     auto t1_start = std::chrono::steady_clock::now();
     Image<unsigned char> grayscale = image.to_grayscale();
     save_to_file("_temp.jpg", grayscale, quality); // I/O
     auto t1_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Preproc (Grayscale/Save Temp JPEG): "<<std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count()<<"ms"<<std::endl;
     
-    // --- Medición 2: Carga de imagen comprimida y resta ---
     auto t2_start = std::chrono::steady_clock::now();
     Image<float> compressed = load_from_file("_temp.jpg").convert<float>(); // I/O y conversión
     compressed = compressed + (grayscale.convert<float>()*(-1));
     auto t2_end = std::chrono::steady_clock::now();
     std::cout<<"  -> Load/Convert/Subtract: "<<std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count()<<"ms"<<std::endl;
     
-    // --- Medición 3: Postprocesamiento (Abs, Normalize, Escalar) ---
     auto t3_start = std::chrono::steady_clock::now();
     compressed = compressed.abs().normalized() * 255;
     Image<unsigned char> result = compressed.convert<unsigned char>();
@@ -142,14 +133,13 @@ Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality)
 }
 
 int main(int argc, char **argv) {
-    auto total_begin = std::chrono::steady_clock::now(); // INICIO DE MEDICIÓN TOTAL DEL MAIN
+    auto total_begin = std::chrono::steady_clock::now(); 
     if(argc == 1) {
         std::cerr<<"Image filename missing from arguments. Usage ./dct <filename>"<<std::endl;
         exit(1);
     }
     int block_size=8;
     
-    // --- Medición Carga Inicial ---
     auto load_start = std::chrono::steady_clock::now();
     Image<unsigned char> image = load_from_file(argv[1]);
     auto load_end = std::chrono::steady_clock::now();
@@ -170,7 +160,7 @@ int main(int argc, char **argv) {
     Image<unsigned char> dct_direct = compute_dct(image, block_size, false);
     save_to_file("dct_direct.png", dct_direct);
 
-    auto total_end = std::chrono::steady_clock::now(); // FIN DE MEDICIÓN TOTAL DEL MAIN
+    auto total_end = std::chrono::steady_clock::now(); 
     std::cout << "\nTotal execution time (main body): " << std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_begin).count() << "ms" << std::endl;
 
     return 0;
