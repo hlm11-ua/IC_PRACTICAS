@@ -1,120 +1,165 @@
-#include <stdio.h>
-#include <math.h>
-#include <stdlib.h>
-#include "png.h"
-#include <vector>
-#include <assert.h>
-#include <iostream>
-#include <memory>
-#include "utils/image.h"
-#include "utils/dct.h"
-#include <string>
-#include <chrono>
 #include "mpi.h"
+#include <iostream>
+#include <string>
+#include <vector>
+#include <chrono>
+#include <filesystem>
+#include "utils/image.h" // Asegúrate que la ruta sea correcta según tu carpeta
+#include "utils/dct.h"
 
-Image<float> get_srm_3x3() {
-    Image<float> kernel(3, 3, 1);
-    kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
-    kernel.set(1, 0, 0, 2); kernel.set(1, 1, 0, -4); kernel.set(1, 2, 0, 2);
-    kernel.set(2, 0, 0, -1); kernel.set(2, 1, 0, 2); kernel.set(2, 2, 0, -1);
-    return kernel;
+// --- Configuración por defecto ---
+const std::string DEFAULT_FILENAME = "input.png";
+
+// Función SRM (Spatial Rich Models) - Convolución
+Image<float> get_srm_kernel_3x3() {
+    Image<float> k(3, 3, 1);
+    k.set(0,0,0, -1); k.set(0,1,0, 2); k.set(0,2,0, -1);
+    k.set(1,0,0, 2);  k.set(1,1,0, -4); k.set(1,2,0, 2);
+    k.set(2,0,0, -1); k.set(2,1,0, 2); k.set(2,2,0, -1);
+    return k;
 }
 
-Image<float> get_srm_5x5() {
-    Image<float> kernel(5, 5, 1);
-    kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -2); kernel.set(0, 3, 0, 2); kernel.set(0, 4, 0, -1);
-    kernel.set(1, 0, 0, 2); kernel.set(1, 1, 0, -6); kernel.set(1, 2, 0, 8); kernel.set(1, 3, 0, -6); kernel.set(1, 4, 0, 2);
-    kernel.set(2, 0, 0, -2); kernel.set(2, 1, 0, 8); kernel.set(2, 2, 0, -12); kernel.set(2, 3, 0, 8); kernel.set(2, 4, 0, -2);
-    kernel.set(3, 0, 0, 2); kernel.set(3, 1, 0, -6); kernel.set(3, 2, 0, 8); kernel.set(3, 3, 0, -6); kernel.set(3, 4, 0, 2);
-    kernel.set(4, 0, 0, -1); kernel.set(4, 1, 0, 2); kernel.set(4, 2, 0, -2); kernel.set(4, 3, 0, 2); kernel.set(4, 4, 0, -1);
-    return kernel;
+Image<unsigned char> compute_srm(const Image<unsigned char> &img) {
+    Image<float> kernel = get_srm_kernel_3x3();
+    // La convolución devuelve imagen del mismo tamaño
+    return img.convolution(kernel).convert<unsigned char>();
 }
 
-Image<float> get_srm_kernel(int size) {
-    assert(size == 3 || size == 5);
-    switch(size){
-        case 3:
-            return get_srm_3x3();
-        case 5:
-            return get_srm_5x5();
-    }
-    return get_srm_3x3();
-}
-
-
-Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_size) {
-    auto begin = std::chrono::steady_clock::now();
-    std::cout<<"Computing SRM "<<kernel_size<<"x"<<kernel_size<<"..."<<std::endl;          
-    Image<float> srm = image.to_grayscale().convert<float>();
-    srm = srm.convolution(get_srm_kernel(kernel_size));
-    srm = srm.abs().normalized();
-    srm = srm * 255;
-    Image<unsigned char> result = srm.convert<unsigned char>();
+// Función ELA (Secuencial, solo Rank 0)
+Image<unsigned char> compute_ela(const Image<unsigned char> &img, int quality=90) {
+    std::cout << "[Rank 0] Ejecutando ELA..." << std::endl;
+    Image<unsigned char> gray = img.to_grayscale();
+    save_to_file("_ela_temp.jpg", gray, quality);
     
-    auto end = std::chrono::steady_clock::now();
-    std::cout<<"SRM elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
-    return result;
-}
-
-Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_size, bool invert) {
-    auto begin = std::chrono::steady_clock::now();
-    std::cout<<"Computing"; 
-    if (invert) std::cout<<" inverse";
-    else std::cout<<" direct";
-    std::cout<<" DCT "<<block_size<<"x"<<block_size<<"..."<<std::endl;
-    Image<float> grayscale = image.convert<float>().to_grayscale();
-    std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
-
-    for(int i=0;i<blocks.size();i++){
-        float **dctBlock = dct::create_matrix(block_size, block_size);
-        dct::direct(dctBlock, blocks[i], 0);
-        if (invert) {
-          for(int k=0;k<blocks[i].size/2;k++)
-            for(int l=0;l<blocks[i].size/2;l++)
-              dctBlock[k][l] = 0.0;
-          dct::inverse(blocks[i], dctBlock, 0, 0.0, 255.);
-        }else dct::assign(dctBlock, blocks[i], 0);
-        dct::delete_matrix(dctBlock);
-    }
-    Image<unsigned char> result = grayscale.convert<unsigned char>();
-    auto end = std::chrono::steady_clock::now();
-    std::cout<<"DCT elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
-    return result;
-}
-
-Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality){
-    std::cout<<"Computing ELA..."<<std::endl;
-    auto begin = std::chrono::steady_clock::now();
-    Image<unsigned char> grayscale = image.to_grayscale();
-    save_to_file("_temp.jpg", grayscale, quality);
-    Image<float> compressed = load_from_file("_temp.jpg").convert<float>();
-    compressed = compressed + (grayscale.convert<float>()*(-1));
-    compressed = compressed.abs().normalized() * 255;
-    Image<unsigned char> result = compressed.convert<unsigned char>();
-    auto end = std::chrono::steady_clock::now();
-    std::cout<<"ELA elapsed time: "<<std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()<<"ms"<<std::endl;
-    return result;
+    Image<float> compressed = load_from_file("_ela_temp.jpg").convert<float>();
+    Image<float> orig = gray.convert<float>();
+    
+    // Diff + Abs + Normalize
+    Image<float> diff = (compressed + (orig * -1.0)).abs();
+    
+    // Normalización simple x scale
+    diff = diff * 10.0; // Amplificar error visualmente
+    
+    remove("_ela_temp.jpg");
+    return diff.convert<unsigned char>();
 }
 
 int main(int argc, char **argv) {
+    // 1. Inicializar MPI
     MPI_Init(&argc, &argv);
+    
     int rank, procs;
     MPI_Comm_size(MPI_COMM_WORLD, &procs);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    std::cout<<"This is process "<<rank<<" of "<<procs<<std::endl;
-    if(argc == 1) {
-        std::cerr<<"Image filename missing from arguments. Usage ./dct <filename>"<<std::endl;
-        exit(1);
-    }
-    int block_size=8;
-    Image<unsigned char> image = load_from_file(argv[1]);
-    Image<unsigned char> srm3x3 = compute_srm(image, 3);
-    save_to_file("srm_kernel_3x3.png", srm3x3);
-    save_to_file("srm_kernel_5x5.png", compute_srm(image, 5));
-    save_to_file("ela.png", compute_ela(image, 90));
-    save_to_file("dct_invert.png", compute_dct(image, block_size, true));
-    save_to_file("dct_direct.png", compute_dct(image, block_size, false));
-    MPI_Finalize();
 
+    // Variables globales
+    int width = 0, height = 0, channels = 0;
+    Image<unsigned char> global_image;
+
+    // 2. Carga de Imagen (Solo Rank 0)
+    if (rank == 0) {
+        std::string filename = DEFAULT_FILENAME;
+        if (argc > 1) filename = argv[1]; // Opcional: permite argumento si se da
+
+        if (!std::filesystem::exists(filename)) {
+            std::cerr << "ERROR: No se encuentra el archivo '" << filename << "'." << std::endl;
+            std::cerr << "Por favor, coloca una imagen llamada 'input.png' en el directorio." << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        global_image = load_from_file(filename);
+        width = global_image.width;
+        height = global_image.height;
+        channels = global_image.channels;
+        
+        std::cout << "Imagen cargada: " << width << "x" << height << " (" << channels << " canales)." << std::endl;
+
+        // Comprobación de divisibilidad para Scatter simple
+        if (height % procs != 0) {
+            std::cerr << "ERROR FATAL: La altura (" << height << ") no es divisible por " << procs << " procesos." << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        
+        // Comprobación para DCT (bloques de 8) en cada trozo local
+        int local_h = height / procs;
+        if (local_h % 8 != 0) {
+            std::cerr << "ERROR FATAL: La altura local (" << local_h << ") no es múltiplo de 8 (requerido para DCT)." << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+    }
+
+    // 3. Broadcast de metadatos
+    MPI_Bcast(&width, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&height, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&channels, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // 4. Preparar memoria local
+    int local_height = height / procs;
+    int data_size = width * local_height * channels;
+    Image<unsigned char> local_image(width, local_height, channels);
+
+    // 5. Scatter (Repartir imagen)
+    unsigned char* sendptr = (rank == 0) ? global_image.matrix.get() : nullptr;
+    MPI_Scatter(sendptr, data_size, MPI_UNSIGNED_CHAR, 
+                local_image.matrix.get(), data_size, MPI_UNSIGNED_CHAR, 
+                0, MPI_COMM_WORLD);
+
+    // ----------------------------------------------------
+    // INICIO ZONA PARALELA
+    // ----------------------------------------------------
+    MPI_Barrier(MPI_COMM_WORLD);
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    // A. Calcular SRM Local
+    Image<unsigned char> local_srm = compute_srm(local_image);
+
+    Image<unsigned char> local_dct = dct::compute_full_dct(local_image, 8);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    auto t_end = std::chrono::high_resolution_clock::now();
+    // ----------------------------------------------------
+
+    // 6. Gather (Recolectar resultados)
+    Image<unsigned char> final_srm;
+    Image<unsigned char> final_dct;
+
+    if (rank == 0) {
+        final_srm = Image<unsigned char>(width, height, channels);
+        final_dct = Image<unsigned char>(width, height, channels);
+    }
+
+    // Recoger SRM
+    MPI_Gather(local_srm.matrix.get(), data_size, MPI_UNSIGNED_CHAR,
+               (rank==0 ? final_srm.matrix.get() : nullptr), data_size, MPI_UNSIGNED_CHAR,
+               0, MPI_COMM_WORLD);
+
+    // Recoger DCT
+    MPI_Gather(local_dct.matrix.get(), data_size, MPI_UNSIGNED_CHAR,
+               (rank==0 ? final_dct.matrix.get() : nullptr), data_size, MPI_UNSIGNED_CHAR,
+               0, MPI_COMM_WORLD);
+
+    // 7. Guardar y ELA (Solo Rank 0)
+    if (rank == 0) {
+        double elapsed = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        std::cout << "Tiempo de Computo Paralelo (SRM + DCT): " << elapsed << " ms" << std::endl;
+
+        save_to_file("output_srm.png", final_srm);
+        std::cout << "Guardado: output_srm.png" << std::endl;
+
+        save_to_file("output_dct.png", final_dct);
+        std::cout << "Guardado: output_dct.png" << std::endl;
+
+        // ELA (No paralelizable eficientemente por IO, se hace secuencial aquí)
+        auto t_ela_start = std::chrono::high_resolution_clock::now();
+        Image<unsigned char> ela = compute_ela(global_image);
+        auto t_ela_end = std::chrono::high_resolution_clock::now();
+        
+        save_to_file("output_ela.png", ela);
+        std::cout << "Guardado: output_ela.png (" 
+                  << std::chrono::duration<double, std::milli>(t_ela_end - t_ela_start).count() 
+                  << " ms)" << std::endl;
+    }
+
+    MPI_Finalize();
     return 0;
 }

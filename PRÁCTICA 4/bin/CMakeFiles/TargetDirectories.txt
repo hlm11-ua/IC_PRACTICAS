@@ -1,0 +1,8 @@
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/CMakeFiles/edit_cache.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/CMakeFiles/rebuild_cache.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/CMakeFiles/detect.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/CMakeFiles/edit_cache.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/CMakeFiles/rebuild_cache.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/utils/CMakeFiles/utils.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/utils/CMakeFiles/edit_cache.dir
+/home/alumno/Escritorio/IC_PRACTICAS/PRÁCTICA 4/bin/src/utils/CMakeFiles/rebuild_cache.dir

@@ -9,6 +9,9 @@ namespace dct{
     void assign(float **DCTMatrix, Block<float> &block, int channel);
     float **create_matrix(int x_size, int y_size);
     void delete_matrix(float **m);
+    
+    // NUEVA FUNCIÓN para procesar imágenes completas o trozos
+    Image<unsigned char> compute_full_dct(const Image<unsigned char> &img, int block_size);
 }
 
 #endif
