@@ -12,9 +12,7 @@
 #include <chrono>
 #include "mpi.h"
 
-// ==========================================
-// KERNELS (Sin cambios)
-// ==========================================
+
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
     kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
@@ -36,23 +34,46 @@ Image<float> get_srm_kernel(int size) {
     return get_srm_3x3();
 }
 
-// ==========================================
-// FUNCIONES DE CÓMPUTO (SECUENCIALES)
-// ==========================================
-// Han vuelto a ser simples porque un solo proceso hará todo el trabajo de su tarea asignada.
 
-Image<unsigned char> compute_srm_seq(const Image<unsigned char> &image, int kernel_size) {
+
+Image<unsigned char> compute_srm_seq(const Image<unsigned char> &image, int kernel_size, int rank) {
+    std::cout << "[Rank " << rank << "] Iniciando SRM " << kernel_size << "x" << kernel_size << "..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> srm_input = image.to_grayscale().convert<float>();
     Image<float> kernel = get_srm_kernel(kernel_size);
-    Image<float> output = srm_input.convolution(kernel); // Usamos la conv del utils/image.h o manual
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Preproc (Gray/Conv): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
+
+    auto t2_start = std::chrono::steady_clock::now();
+    Image<float> output = srm_input.convolution(kernel); 
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Convolucion: " << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
+
+    auto t3_start = std::chrono::steady_clock::now();
     output = output.abs().normalized() * 255;
-    return output.convert<unsigned char>();
+    Image<unsigned char> result = output.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Postproc (Norm): " << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "[Rank " << rank << "] Total SRM " << kernel_size << "x" << kernel_size << ": " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+    return result;
 }
 
-Image<unsigned char> compute_dct_seq(const Image<unsigned char> &image, int block_size, bool invert) {
+Image<unsigned char> compute_dct_seq(const Image<unsigned char> &image, int block_size, bool invert, int rank) {
+    std::cout << "[Rank " << rank << "] Iniciando DCT " << (invert ? "Inversa" : "Directa") << "..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Preproc (Blocks): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
 
+    auto t2_start = std::chrono::steady_clock::now();
     for(int i=0; i<blocks.size(); i++){
         float **dctBlock = dct::create_matrix(block_size, block_size);
         dct::direct(dctBlock, blocks[i], 0);
@@ -65,23 +86,49 @@ Image<unsigned char> compute_dct_seq(const Image<unsigned char> &image, int bloc
         }
         dct::delete_matrix(dctBlock);
     }
-    return grayscale.convert<unsigned char>();
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Calculo DCT Loop: " << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
+    
+    auto t3_start = std::chrono::steady_clock::now();
+    Image<unsigned char> result = grayscale.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank " << rank << "] Postproc (Convert): " << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "[Rank " << rank << "] Total DCT " << (invert ? "Inv" : "Dir") << ": " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+    
+    return result;
 }
 
 Image<unsigned char> compute_ela_seq(const Image<unsigned char> &image, int quality) {
-    // ELA requiere disco, mejor que lo haga el Master o un proceso con acceso a disco seguro
+    std::cout << "[Rank 0] Iniciando ELA..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+    
+    auto t1_start = std::chrono::steady_clock::now();
     Image<unsigned char> grayscale = image.to_grayscale();
     save_to_file("_temp_ela_task.jpg", grayscale, quality);
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank 0] Preproc (Save JPEG): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
+
+    auto t2_start = std::chrono::steady_clock::now();
     Image<float> compressed = load_from_file("_temp_ela_task.jpg").convert<float>();
     compressed = compressed + (grayscale.convert<float>()*(-1));
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank 0] Calc (Load/Diff): " << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
+
+    auto t3_start = std::chrono::steady_clock::now();
     compressed = compressed.abs().normalized() * 255;
     remove("_temp_ela_task.jpg");
-    return compressed.convert<unsigned char>();
+    Image<unsigned char> result = compressed.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout << "  -> [Rank 0] Postproc (Norm): " << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+    
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "[Rank 0] Total ELA: " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+    return result;
 }
-
-// ==========================================
-// MAIN (PARALELISMO DE TAREAS)
-// ==========================================
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
@@ -89,20 +136,19 @@ int main(int argc, char **argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &procs);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // Necesitamos al menos 5 procesos (Rank 0 + 4 trabajadores) para cubrir las 5 tareas
-    // Tareas: ELA(Rank0), SRM3(Rank1), SRM5(Rank2), DCT_INV(Rank3), DCT_DIR(Rank4)
-    if (procs < 5) {
-        if (rank == 0) std::cerr << "ERROR: Para paralelismo de tareas funcional necesitamos al menos 5 procesos." << std::endl;
+    if (procs < 4) {
+        if (rank == 0) std::cerr << "ERROR: Se necesitan al menos 4 procesos." << std::endl;
         MPI_Finalize();
         exit(1);
     }
 
-    double t_start = MPI_Wtime();
+    double t_start_global = MPI_Wtime();
+    double t_bcast_end, t_ela_end, t_srm3_rx, t_srm5_rx, t_dcti_rx, t_dctd_rx;
+    double t_save_start, t_save_end;
 
     Image<unsigned char> image;
     int width, height, channels;
 
-    // 1. CARGA Y DIFUSIÓN DE IMAGEN (Todos necesitan la entrada)
     if (rank == 0) {
         if(argc == 1) { std::cerr << "Falta imagen" << std::endl; exit(1); }
         image = load_from_file(argv[1]);
@@ -115,74 +161,79 @@ int main(int argc, char **argv) {
 
     if (rank != 0) image = Image<unsigned char>(width, height, channels);
     MPI_Bcast(image.matrix.get(), width * height * channels, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+    
+    MPI_Barrier(MPI_COMM_WORLD); // Sincronizar para medir el Bcast limpio
+    t_bcast_end = MPI_Wtime();
 
-    // 2. DISTRIBUCIÓN DE TAREAS POR RANK
-    // Usamos etiquetas (tags) para identificar qué imagen vuelve al maestro
-    // Tag 1: SRM3, Tag 2: SRM5, Tag 3: DCT_INV, Tag 4: DCT_DIR
+    long int img_size = width * height;
 
     if (rank == 0) {
-        std::cout << "--- MASTER: Iniciando orquestación de tareas ---" << std::endl;
+        std::cout << "--- MASTER: Iniciando con 4 procesos ---" << std::endl;
         
-        // Tarea del Maestro: ELA (por ser I/O bound)
-        double t_ela = MPI_Wtime();
         Image<unsigned char> res_ela = compute_ela_seq(image, 90);
-        save_to_file("ela.png", res_ela);
-        std::cout << "Master termino ELA en " << (MPI_Wtime() - t_ela)*1000 << "ms" << std::endl;
-
-        // Recolección de resultados de los trabajadores
-        // Necesitamos buffers para recibir
-        long int img_size = width * height; // SRM y DCT devuelven 1 canal (gris)
-        Image<unsigned char> buf_img(width, height, 1);
+        t_ela_end = MPI_Wtime();
         
-        // Recibir SRM 3x3 de Rank 1
-        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 1, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        t_save_start = MPI_Wtime();
+        save_to_file("ela.png", res_ela);
+        t_save_end = MPI_Wtime(); 
+
+        Image<unsigned char> buf_img(width, height, 1);
+        MPI_Status status;
+
+        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 1, 10, MPI_COMM_WORLD, &status);
+        t_srm3_rx = MPI_Wtime(); 
         save_to_file("srm_kernel_3x3.png", buf_img);
-        std::cout << "Recibido SRM 3x3 de Rank 1" << std::endl;
+        std::cout << "[Master] Recibido SRM 3x3" << std::endl;
 
-        // Recibir SRM 5x5 de Rank 2
-        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 2, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 1, 11, MPI_COMM_WORLD, &status);
+        t_srm5_rx = MPI_Wtime();
         save_to_file("srm_kernel_5x5.png", buf_img);
-        std::cout << "Recibido SRM 5x5 de Rank 2" << std::endl;
+        std::cout << "[Master] Recibido SRM 5x5" << std::endl;
 
-        // Recibir DCT INVERT de Rank 3
-        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 3, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 2, 20, MPI_COMM_WORLD, &status);
+        t_dcti_rx = MPI_Wtime();
         save_to_file("dct_invert.png", buf_img);
-        std::cout << "Recibido DCT Inv de Rank 3" << std::endl;
+        std::cout << "[Master] Recibido DCT Inv" << std::endl;
 
-        // Recibir DCT DIRECT de Rank 4
-        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 4, 4, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(buf_img.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 3, 21, MPI_COMM_WORLD, &status);
+        t_dctd_rx = MPI_Wtime();
         save_to_file("dct_direct.png", buf_img);
-        std::cout << "Recibido DCT Dir de Rank 4" << std::endl;
+        std::cout << "[Master] Recibido DCT Dir" << std::endl;
 
     } 
     else if (rank == 1) {
-        // TAREA 1: SRM 3x3
-        Image<unsigned char> res = compute_srm_seq(image, 3);
-        MPI_Send(res.matrix.get(), res.width * res.height, MPI_UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD);
+        
+        Image<unsigned char> res3 = compute_srm_seq(image, 3, rank);
+        MPI_Send(res3.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 10, MPI_COMM_WORLD);
+
+        Image<unsigned char> res5 = compute_srm_seq(image, 5, rank);
+        MPI_Send(res5.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 11, MPI_COMM_WORLD);
     }
     else if (rank == 2) {
-        // TAREA 2: SRM 5x5
-        Image<unsigned char> res = compute_srm_seq(image, 5);
-        MPI_Send(res.matrix.get(), res.width * res.height, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
+        Image<unsigned char> res = compute_dct_seq(image, 8, true, rank);
+        MPI_Send(res.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 20, MPI_COMM_WORLD);
     }
     else if (rank == 3) {
-        // TAREA 3: DCT Inversa
-        Image<unsigned char> res = compute_dct_seq(image, 8, true);
-        MPI_Send(res.matrix.get(), res.width * res.height, MPI_UNSIGNED_CHAR, 0, 3, MPI_COMM_WORLD);
-    }
-    else if (rank == 4) {
-        // TAREA 4: DCT Directa
-        Image<unsigned char> res = compute_dct_seq(image, 8, false);
-        MPI_Send(res.matrix.get(), res.width * res.height, MPI_UNSIGNED_CHAR, 0, 4, MPI_COMM_WORLD);
-    }
-    else {
-        std::cout << "Rank " << rank << " no tiene tarea asignada y se va a dormir." << std::endl;
+        Image<unsigned char> res = compute_dct_seq(image, 8, false, rank);
+        MPI_Send(res.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 21, MPI_COMM_WORLD);
     }
 
-    // Esperar a que todos acaben
     MPI_Barrier(MPI_COMM_WORLD);
+    
     if (rank == 0) {
-        std::cout << "Tiempo Total Ejecucion: " << (MPI_Wtime() - t_start)*1000 << " ms" << std::endl;
+        double t_total = MPI_Wtime() - t_start_global;
+        
+        printf("\n=== RESUMEN TIEMPOS MPI (TASK PARALLELISM: 4 PROCS) ===\n");
+        printf("Difusion inicial (Bcast)     : %7.2f ms\n", (t_bcast_end - t_start_global) * 1000.0);
+        printf("---------------------------------------------\n");
+        printf("Tarea ELA (Rank 0 Local)     : %7.2f ms\n", (t_ela_end - t_bcast_end) * 1000.0);
+        printf("Tarea SRM 3x3 (Rx Rank 1)    : %7.2f ms (Espera desde fin ELA)\n", (t_srm3_rx - t_ela_end) * 1000.0);
+        printf("Tarea SRM 5x5 (Rx Rank 1)    : %7.2f ms (Espera desde SRM3)\n", (t_srm5_rx - t_srm3_rx) * 1000.0);
+        printf("Tarea DCT Inv (Rx Rank 2)    : %7.2f ms (Espera desde SRM5)\n", (t_dcti_rx - t_srm5_rx) * 1000.0);
+        printf("Tarea DCT Dir (Rx Rank 3)    : %7.2f ms (Espera desde DCTI)\n", (t_dctd_rx - t_dcti_rx) * 1000.0);
+        printf("---------------------------------------------\n");
+        printf("TIEMPO TOTAL EJECUCION       : %7.2f ms\n", t_total * 1000.0);
+        printf("=============================================\n");
     }
 
     MPI_Finalize();
