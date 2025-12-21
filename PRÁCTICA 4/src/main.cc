@@ -12,9 +12,6 @@
 #include <chrono>
 #include "mpi.h"
 
-// ==========================================
-// KERNELS Y MATRICES (SRM) - Sin cambios
-// ==========================================
 
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
@@ -43,28 +40,24 @@ Image<float> get_srm_kernel(int size) {
     return get_srm_3x3();
 }
 
-// ==========================================
-// FUNCIONES DE CÓMPUTO PARALELIZADAS
-// ==========================================
-
-// --- SRM: Usamos Bcast para entrada (fácil halos) y Gather para salida ---
 Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_size, int rank, int procs) {
+    if (rank == 0) std::cout << "Computing SRM " << kernel_size << "x" << kernel_size << "..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> srm_input = image.to_grayscale().convert<float>();
     Image<float> kernel = get_srm_kernel(kernel_size);
     
-    // Buffer donde escribiremos el resultado (todos reservan memoria)
-    // Nota: Aunque solo usaremos un trozo, reservar todo simplifica los índices.
     Image<float> srm_output(srm_input.width, srm_input.height, 1);
 
-    // 1. Calcular división EXACTA por filas
-    // Si height=102 y procs=4 -> rows_per_proc = 25. (Sobran 2 filas al final)
     int rows_per_proc = srm_input.height / procs;
     
-    // Mis filas asignadas
     int start_row = rank * rows_per_proc;
-    int end_row = start_row + rows_per_proc; // EXACTO, sin coger sobrantes
+    int end_row = start_row + rows_per_proc;
+    auto t1_end = std::chrono::steady_clock::now();
+    if (rank == 0) std::cout << "  -> Preproc (Gray/Setup): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
 
-    // 2. Cómputo Local (Parte Paralela)
+    auto t2_start = std::chrono::steady_clock::now();
     int k_center = kernel.width / 2;
     for (int j = start_row; j < end_row; j++) {
         for (int i = 0; i < srm_input.width; i++) {
@@ -79,25 +72,20 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
             srm_output.set(j, i, 0, sum / (kernel.width * kernel.width));
         }
     }
+    auto t2_end = std::chrono::steady_clock::now();
+    if (rank == 0) std::cout << "  -> Convolution (Local): " << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
 
-    // 3. Recolección (Gather Estándar)
-    // Enviamos exactamente 'rows_per_proc' filas.
+    auto t3_start = std::chrono::steady_clock::now();
     long int count = rows_per_proc * srm_input.width;
     float* my_data_ptr = srm_output.matrix.get() + (start_row * srm_input.width);
 
-    // MPI_Gather estándar (sin V)
-    // El root recibe en srm_output.matrix.get().
-    // Como Gather escribe secuencialmente, llenará desde la fila 0 hasta (rows_per_proc * procs).
     MPI_Gather(my_data_ptr, count, MPI_FLOAT, 
                rank == 0 ? srm_output.matrix.get() : NULL, count, MPI_FLOAT, 
                0, MPI_COMM_WORLD);
 
-    // 4. Procesar el RESIDUO (Solo el Maestro)
-    // Si sobraron filas al final (ej. filas 100 y 101), el maestro las hace ahora a mano.
     if (rank == 0) {
         int processed_rows = rows_per_proc * procs;
         
-        // Bucle para lo que falta
         for (int j = processed_rows; j < srm_input.height; j++) {
             for (int i = 0; i < srm_input.width; i++) {
                 float sum = 0.0;
@@ -112,55 +100,57 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
             }
         }
 
-        // Post-proceso final
         srm_output = srm_output.abs().normalized();
         srm_output = srm_output * 255;
+        
+        auto t3_end = std::chrono::steady_clock::now();
+        std::cout << "  -> Postproc (Gather/Remain/Norm): " << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+        
         return srm_output.convert<unsigned char>();
     }
     
     return Image<unsigned char>();
 }
 
-// --- DCT: Usamos Scatter para entrada y Gather para salida (ahorro memoria) ---
 Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_size, bool invert, int rank, int procs) {
+    if (rank == 0) {
+        std::cout << "Computing";
+        if (invert) std::cout << " inverse"; else std::cout << " direct";
+        std::cout << " DCT " << block_size << "x" << block_size << "..." << std::endl;
+    }
+    
+    auto t1_start = std::chrono::steady_clock::now();
     int width, height;
     Image<unsigned char> gray_source;
 
-    // 1. Preparación en Maestro
     if (rank == 0) {
         width = image.width;
         height = image.height;
         gray_source = image.to_grayscale();
     }
 
-    // 2. Compartir dimensiones
     MPI_Bcast(&width, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&height, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    // 3. Calcular división EXACTA y ALINEADA A 8
-    // Calculamos cuántas filas caben por proceso que sean múltiplo de 8
     int rows_per_proc = (height / procs) / block_size * block_size;
     
-    // Protección: Si la imagen es muy pequeña, forzamos al menos 8 filas (aunque MPI fallaría si procs es grande)
     if (rows_per_proc == 0) rows_per_proc = block_size; 
 
     long int send_count = rows_per_proc * width;
     
-    // Buffer local para recibir MI parte
     unsigned char* my_buffer = new unsigned char[send_count];
 
-    // 4. Repartir (Scatter Estándar)
-    // El maestro envía desde el inicio. Lo que sobre al final se ignora por ahora.
     MPI_Scatter(rank == 0 ? gray_source.matrix.get() : NULL, send_count, MPI_UNSIGNED_CHAR,
                 my_buffer, send_count, MPI_UNSIGNED_CHAR,
                 0, MPI_COMM_WORLD);
 
-    // 5. Cómputo Local
-    // Reconstruimos mini-imagen local
+    auto t1_end = std::chrono::steady_clock::now();
+    if (rank == 0) std::cout << "  -> Preproc (Setup/Scatter): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
+
+    auto t2_start = std::chrono::steady_clock::now();
     Image<unsigned char> my_image_part(width, rows_per_proc, 1);
     for(int i=0; i<send_count; i++) my_image_part.matrix[i] = my_buffer[i];
 
-    // Lógica DCT Local (misma lógica de siempre)
     Image<float> grayscale_part = my_image_part.convert<float>();
     std::vector<Block<float>> blocks = grayscale_part.get_blocks(block_size);
     for(int i=0; i<blocks.size(); i++){
@@ -176,8 +166,10 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
         dct::delete_matrix(dctBlock);
     }
     Image<unsigned char> my_result_part = grayscale_part.convert<unsigned char>();
+    auto t2_end = std::chrono::steady_clock::now();
+    if (rank == 0) std::cout << "  -> Calculation Loop (Local): " << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
 
-    // 6. Recolección (Gather Estándar)
+    auto t3_start = std::chrono::steady_clock::now();
     Image<unsigned char> final_result;
     if (rank == 0) final_result = Image<unsigned char>(width, height, 1);
 
@@ -185,25 +177,20 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
                rank == 0 ? final_result.matrix.get() : NULL, send_count, MPI_UNSIGNED_CHAR,
                0, MPI_COMM_WORLD);
 
-    // 7. Procesar el RESIDUO (Solo el Maestro)
     if (rank == 0) {
         int processed_rows = rows_per_proc * procs;
         int remaining_rows = height - processed_rows;
 
-        // Si sobran filas, el maestro las procesa secuencialmente aquí
         if (remaining_rows > 0) {
-            // Creamos una mini imagen temporal con la franja final
+
             Image<unsigned char> bottom_strip(width, remaining_rows, 1);
             
-            // Copiamos los datos del final de la imagen original
             long int offset = processed_rows * width;
             for (int i=0; i < remaining_rows * width; i++) {
                 bottom_strip.matrix[i] = gray_source.matrix[offset + i];
             }
 
-            // Aplicamos DCT a la franja final
             Image<float> strip_float = bottom_strip.convert<float>();
-            // OJO: get_blocks rellena con negro si no es múltiplo de 8, lo cual es correcto
             std::vector<Block<float>> strip_blocks = strip_float.get_blocks(block_size); 
             
             for(int i=0; i<strip_blocks.size(); i++){
@@ -220,12 +207,14 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
             }
             Image<unsigned char> strip_result = strip_float.convert<unsigned char>();
 
-            // Pegamos el resultado en la imagen final
             for (int i=0; i < remaining_rows * width; i++) {
                 final_result.matrix[offset + i] = strip_result.matrix[i];
             }
         }
         
+        auto t3_end = std::chrono::steady_clock::now();
+        std::cout << "  -> Postproc (Gather/Remainder): " << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+
         delete[] my_buffer;
         return final_result;
     }
@@ -236,20 +225,32 @@ Image<unsigned char> compute_dct(const Image<unsigned char> &image, int block_si
 
 Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality, int rank){
     if (rank == 0) {
+        std::cout << "Computing ELA (Sequential)..." << std::endl;
+        auto begin = std::chrono::steady_clock::now();
+        
         Image<unsigned char> grayscale = image.to_grayscale();
         save_to_file("_temp_ela.jpg", grayscale, quality);
+        
+        auto t1 = std::chrono::steady_clock::now();
+        std::cout << "  -> Preproc (Gray/Save): " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - begin).count() << "ms" << std::endl;
+
         Image<float> compressed = load_from_file("_temp_ela.jpg").convert<float>();
         compressed = compressed + (grayscale.convert<float>()*(-1));
+        
+        auto t2 = std::chrono::steady_clock::now();
+        std::cout << "  -> Calculation (Load/Diff): " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
+
         compressed = compressed.abs().normalized() * 255;
         remove("_temp_ela.jpg");
-        return compressed.convert<unsigned char>();
+        Image<unsigned char> res = compressed.convert<unsigned char>();
+        
+        auto end = std::chrono::steady_clock::now();
+        std::cout << "  -> Postproc (Norm/Convert): " << std::chrono::duration_cast<std::chrono::milliseconds>(end - t2).count() << "ms" << std::endl;
+
+        return res;
     }
     return Image<unsigned char>();
 }
-
-// ==========================================
-// MAIN
-// ==========================================
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
@@ -274,7 +275,6 @@ int main(int argc, char **argv) {
     Image<unsigned char> image;
     int width, height, channels;
 
-    // 1. Maestro carga metadatos y datos
     if (rank == 0) {
         image = load_from_file(argv[1]);
         width = image.width;
@@ -282,7 +282,6 @@ int main(int argc, char **argv) {
         channels = image.channels;
     }
 
-    // 2. Comunicar dimensiones y datos (Broadcast)
     MPI_Bcast(&width, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&height, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&channels, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -290,40 +289,30 @@ int main(int argc, char **argv) {
     if (rank != 0) {
         image = Image<unsigned char>(width, height, channels);
     }
-    // Broadcast de la imagen completa para SRM
     MPI_Bcast(image.matrix.get(), width * height * channels, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     t_dist_end = MPI_Wtime();
 
-    // ---------------------------------------------------------
-    // ETAPA 2: CÓMPUTO PARALELO
-    // ---------------------------------------------------------
-    
     Image<unsigned char> r_srm3, r_srm5, r_ela, r_dct_i, r_dct_d;
     int block_size = 8;
 
-    // >> SRM 3x3
     t_compute_start = MPI_Wtime();
     r_srm3 = compute_srm(image, 3, rank, procs);
     t_srm3 = MPI_Wtime() - t_compute_start;
 
-    // >> SRM 5x5
     t_compute_start = MPI_Wtime();
     r_srm5 = compute_srm(image, 5, rank, procs);
     t_srm5 = MPI_Wtime() - t_compute_start;
 
-    // >> ELA
     t_compute_start = MPI_Wtime();
     r_ela = compute_ela(image, 90, rank);
     t_ela = MPI_Wtime() - t_compute_start;
 
-    // >> DCT Inversa
     t_compute_start = MPI_Wtime();
     r_dct_i = compute_dct(image, block_size, true, rank, procs);
     t_dct_inv = MPI_Wtime() - t_compute_start;
 
-    // >> DCT Directa
     t_compute_start = MPI_Wtime();
     r_dct_d = compute_dct(image, block_size, false, rank, procs);
     t_dct_dir = MPI_Wtime() - t_compute_start;
@@ -331,9 +320,6 @@ int main(int argc, char **argv) {
     MPI_Barrier(MPI_COMM_WORLD);
     t_compute_end = MPI_Wtime();
 
-    // ---------------------------------------------------------
-    // ETAPA 3: GUARDADO (Solo Maestro)
-    // ---------------------------------------------------------
     if (rank == 0) {
         save_to_file("srm_kernel_3x3.png", r_srm3);
         save_to_file("srm_kernel_5x5.png", r_srm5);
@@ -345,17 +331,16 @@ int main(int argc, char **argv) {
     MPI_Barrier(MPI_COMM_WORLD);
     t_save_end = MPI_Wtime();
 
-    // REPORTE
     if (rank == 0) {
         printf("\n=== RESULTADOS MPI (%d PROCESOS) ===\n", procs);
         printf("Distribucion datos (Bcast) : %7.2f ms\n", (t_dist_end - t_start) * 1000.0);
-        printf("SRM 3x3 (Paralelo)         : %7.2f ms\n", t_srm3 * 1000.0);
-        printf("SRM 5x5 (Paralelo)         : %7.2f ms\n", t_srm5 * 1000.0);
+        printf("SRM 3x3 (Total)            : %7.2f ms\n", t_srm3 * 1000.0);
+        printf("SRM 5x5 (Total)            : %7.2f ms\n", t_srm5 * 1000.0);
         printf("ELA (Secuencial)           : %7.2f ms\n", t_ela * 1000.0);
-        printf("DCT Inversa (Paralelo)     : %7.2f ms\n", t_dct_inv * 1000.0);
-        printf("DCT Directa (Paralelo)     : %7.2f ms\n", t_dct_dir * 1000.0);
+        printf("DCT Inversa (Total)        : %7.2f ms\n", t_dct_inv * 1000.0);
+        printf("DCT Directa (Total)        : %7.2f ms\n", t_dct_dir * 1000.0);
         printf("Guardado disco             : %7.2f ms\n", (t_save_end - t_compute_end) * 1000.0);
-        printf("TIEMPO TOTAL               : %7.2f ms\n", (t_save_end - t_start) * 1000.0);
+        printf("TIEMPO TOTAL GLOBAL        : %7.2f ms\n", (t_save_end - t_start) * 1000.0);
         printf("======================================\n");
     }
 
