@@ -12,9 +12,7 @@
 #include <chrono>
 #include "mpi.h"
 
-// ==========================================
-// KERNELS (Sin cambios)
-// ==========================================
+
 Image<float> get_srm_3x3() {
     Image<float> kernel(3, 3, 1);
     kernel.set(0, 0, 0, -1); kernel.set(0, 1, 0, 2); kernel.set(0, 2, 0, -1);
@@ -36,25 +34,30 @@ Image<float> get_srm_kernel(int size) {
     return get_srm_3x3();
 }
 
-// ==========================================
-// FUNCIONES ADAPTADAS A SUB-GRUPOS
-// ==========================================
 
-// SRM: Versión simple que usa un comunicador específico (comm)
-// Si el grupo tiene 1 proceso, actúa secuencial. Si tiene más, paraleliza.
 Image<unsigned char> compute_srm_group(const Image<unsigned char> &image, int kernel_size, MPI_Comm comm) {
     int rank, procs;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &procs);
 
+    if(rank == 0) std::cout << "[Group SRM] Computing SRM " << kernel_size << "x" << kernel_size << "..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> srm_input = image.to_grayscale().convert<float>();
     Image<float> kernel = get_srm_kernel(kernel_size);
     Image<float> srm_partial(srm_input.width, srm_input.height, 1);
+    auto t1_end = std::chrono::steady_clock::now();
+    
+    if(rank == 0) 
+        std::cout << "  -> Preproc (Grayscale/Convert): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
 
     int rows_per_proc = srm_input.height / procs;
     int start_row = rank * rows_per_proc;
     int end_row = (rank == procs - 1) ? srm_input.height : (rank + 1) * rows_per_proc;
 
+    auto t2_start = std::chrono::steady_clock::now();
     int k_center = kernel.width / 2;
     for (int j = start_row; j < end_row; j++) {
         for (int i = 0; i < srm_input.width; i++) {
@@ -69,11 +72,15 @@ Image<unsigned char> compute_srm_group(const Image<unsigned char> &image, int ke
             srm_partial.set(j, i, 0, sum / (kernel.width * kernel.width));
         }
     }
+    auto t2_end = std::chrono::steady_clock::now();
+    if(rank == 0) 
+        std::cout << "  -> Convolution Loop (Local portion): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
 
     long int count = rows_per_proc * srm_input.width;
     float* send_ptr = srm_partial.matrix.get() + (start_row * srm_input.width);
 
-    // OJO: Usamos 'comm', NO 'MPI_COMM_WORLD'
+    auto t3_start = std::chrono::steady_clock::now();
     if (rank == 0) {
         MPI_Gather(MPI_IN_PLACE, count, MPI_FLOAT, 
                    srm_partial.matrix.get(), count, MPI_FLOAT, 
@@ -87,25 +94,48 @@ Image<unsigned char> compute_srm_group(const Image<unsigned char> &image, int ke
     if (rank == 0) {
         srm_partial = srm_partial.abs().normalized();
         srm_partial = srm_partial * 255;
-        return srm_partial.convert<unsigned char>();
+        Image<unsigned char> result = srm_partial.convert<unsigned char>();
+        
+        auto t3_end = std::chrono::steady_clock::now();
+        std::cout << "  -> Comm & Postproc (Gather/Abs/Norm): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+        
+        auto end = std::chrono::steady_clock::now();
+        std::cout << "SRM " << kernel_size << "x" << kernel_size << " Total Time: " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+        
+        return result;
     }
     return Image<unsigned char>();
 }
 
-// DCT: Paralelizada dentro del grupo 'comm'
 Image<unsigned char> compute_dct_group(const Image<unsigned char> &image, int block_size, bool invert, MPI_Comm comm) {
     int rank, procs;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &procs);
 
+    if(rank == 0) {
+        std::cout << "[Group DCT] Computing"; 
+        if (invert) std::cout << " inverse"; else std::cout << " direct";
+        std::cout << " DCT " << block_size << "x" << block_size << "..." << std::endl;
+    }
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<float> grayscale = image.convert<float>().to_grayscale();
     std::vector<Block<float>> blocks = grayscale.get_blocks(block_size);
+    auto t1_end = std::chrono::steady_clock::now();
+
+    if(rank == 0) 
+        std::cout << "  -> Preproc (Grayscale/Blocks): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
 
     int total_blocks = blocks.size();
     int blocks_per_proc = total_blocks / procs;
     int start_idx = rank * blocks_per_proc;
     int end_idx = (rank == procs - 1) ? total_blocks : (rank + 1) * blocks_per_proc;
 
+    auto t2_start = std::chrono::steady_clock::now();
     for(int i = start_idx; i < end_idx; i++){
         float **dctBlock = dct::create_matrix(block_size, block_size);
         dct::direct(dctBlock, blocks[i], 0);
@@ -118,16 +148,30 @@ Image<unsigned char> compute_dct_group(const Image<unsigned char> &image, int bl
         }
         dct::delete_matrix(dctBlock);
     }
+    auto t2_end = std::chrono::steady_clock::now();
+    if(rank == 0) 
+        std::cout << "  -> Calculation Loop (Local portion): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
 
     long int floats_per_proc = (grayscale.width * grayscale.height) / procs;
     float* send_ptr = grayscale.matrix.get() + (rank * floats_per_proc);
 
-    // OJO: Usamos 'comm', NO 'MPI_COMM_WORLD'
+    auto t3_start = std::chrono::steady_clock::now();
     if (rank == 0) {
          MPI_Gather(MPI_IN_PLACE, floats_per_proc, MPI_FLOAT,
                     grayscale.matrix.get(), floats_per_proc, MPI_FLOAT,
                     0, comm);
-         return grayscale.convert<unsigned char>();
+         Image<unsigned char> result = grayscale.convert<unsigned char>();
+         
+         auto t3_end = std::chrono::steady_clock::now();
+         std::cout << "  -> Comm & Postproc (Gather/Convert): " 
+                   << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+
+         auto end = std::chrono::steady_clock::now();
+         std::cout << "DCT Total Time: " 
+                   << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+         
+         return result;
     } else {
          MPI_Gather(send_ptr, floats_per_proc, MPI_FLOAT,
                     NULL, floats_per_proc, MPI_FLOAT,
@@ -137,21 +181,43 @@ Image<unsigned char> compute_dct_group(const Image<unsigned char> &image, int bl
 }
 
 Image<unsigned char> compute_ela_seq(const Image<unsigned char> &image, int quality) {
+    std::cout << "Computing ELA..." << std::endl;
+    auto begin = std::chrono::steady_clock::now();
+
+    auto t1_start = std::chrono::steady_clock::now();
     Image<unsigned char> grayscale = image.to_grayscale();
     save_to_file("_temp_ela_hybrid.jpg", grayscale, quality);
+    auto t1_end = std::chrono::steady_clock::now();
+    std::cout << "  -> Preproc (Grayscale/Save Temp): " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t1_end - t1_start).count() << "ms" << std::endl;
+
+    auto t2_start = std::chrono::steady_clock::now();
     Image<float> compressed = load_from_file("_temp_ela_hybrid.jpg").convert<float>();
     compressed = compressed + (grayscale.convert<float>()*(-1));
+    auto t2_end = std::chrono::steady_clock::now();
+    std::cout << "  -> Load/Convert/Subtract: " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t2_end - t2_start).count() << "ms" << std::endl;
+
+    auto t3_start = std::chrono::steady_clock::now();
     compressed = compressed.abs().normalized() * 255;
     remove("_temp_ela_hybrid.jpg");
-    return compressed.convert<unsigned char>();
+    Image<unsigned char> result = compressed.convert<unsigned char>();
+    auto t3_end = std::chrono::steady_clock::now();
+    std::cout << "  -> Postproc (Abs/Norm/Scale): " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t3_end - t3_start).count() << "ms" << std::endl;
+
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "ELA elapsed time (Total): " 
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << std::endl;
+    
+    return result;
 }
 
-// ==========================================
-// MAIN HÍBRIDO
-// ==========================================
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
+    auto total_begin = std::chrono::steady_clock::now();
+
     int world_rank, world_procs;
     MPI_Comm_size(MPI_COMM_WORLD, &world_procs);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
@@ -161,7 +227,6 @@ int main(int argc, char **argv) {
         MPI_Finalize(); exit(1);
     }
 
-    // 1. CARGA DE IMAGEN (Todos la tienen)
     Image<unsigned char> image;
     int width, height, channels;
     if (world_rank == 0) {
@@ -176,20 +241,12 @@ int main(int argc, char **argv) {
     if (world_rank != 0) image = Image<unsigned char>(width, height, channels);
     MPI_Bcast(image.matrix.get(), width * height * channels, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
-    // -------------------------------------------------------------
-    // 2. CREACIÓN DE GRUPOS (MPI_Comm_split)
-    // -------------------------------------------------------------
-    // Definimos el "color" del grupo. Procesos con el mismo color estarán juntos.
-    // Color 0: Maestro (Rank 0) -> Hará ELA
-    // Color 1: Equipo SRM (Rank 1) -> Hará SRM
-    // Color 2: Equipo DCT (Rank 2, 3...) -> Harán DCT en paralelo
-    
+
     int color;
     if (world_rank == 0) color = 0;
     else if (world_rank == 1) color = 1;
     else color = 2; // Ranks 2, 3, etc. van al equipo DCT
 
-    // Creamos el nuevo comunicador "local"
     MPI_Comm local_comm;
     MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &local_comm);
 
@@ -197,57 +254,51 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(local_comm, &local_rank);
     MPI_Comm_size(local_comm, &local_procs);
 
-    // -------------------------------------------------------------
-    // 3. EJECUCIÓN POR GRUPOS
-    // -------------------------------------------------------------
-    
-    // VARIABLES PARA RECOLECCIÓN FINAL
+
     long int img_size = width * height;
     Image<unsigned char> buffer_recv(width, height, 1);
 
     if (color == 0) {
-        // --- GRUPO MAESTRO (Rank 0 global) ---
         std::cout << "[Rank 0] Haciendo ELA y coordinando..." << std::endl;
         
-        // 1. Hace su tarea
-        auto start = std::chrono::steady_clock::now();
         Image<unsigned char> ela = compute_ela_seq(image, 90);
         save_to_file("ela.png", ela);
-        auto end = std::chrono::steady_clock::now();
-        std::cout << "ELA completado (" << std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << "ms)" << std::endl;
-
-        // 2. Recibe resultados de los jefes de otros grupos
+        
         MPI_Status status;
         
-        // Recibir SRM 3x3 del Jefe Grupo 1 (Rank 1 global)
+        auto wait_start = std::chrono::steady_clock::now();
         MPI_Recv(buffer_recv.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 1, 10, MPI_COMM_WORLD, &status);
+        auto wait_end = std::chrono::steady_clock::now();
         save_to_file("srm_kernel_3x3.png", buffer_recv);
-        std::cout << "[Rank 0] Recibido SRM 3x3" << std::endl;
+        std::cout << "[Rank 0] Recibido SRM 3x3 (Tiempo de espera: " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - wait_start).count() << "ms)" << std::endl;
 
-        // Recibir SRM 5x5 del Jefe Grupo 1
+        wait_start = std::chrono::steady_clock::now();
         MPI_Recv(buffer_recv.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 1, 11, MPI_COMM_WORLD, &status);
+        wait_end = std::chrono::steady_clock::now();
         save_to_file("srm_kernel_5x5.png", buffer_recv);
-        std::cout << "[Rank 0] Recibido SRM 5x5" << std::endl;
+        std::cout << "[Rank 0] Recibido SRM 5x5 (Tiempo de espera: " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - wait_start).count() << "ms)" << std::endl;
 
-        // Recibir DCT Inversa del Jefe Grupo 2 (Rank 2 global)
+        wait_start = std::chrono::steady_clock::now();
         MPI_Recv(buffer_recv.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 2, 20, MPI_COMM_WORLD, &status);
+        wait_end = std::chrono::steady_clock::now();
         save_to_file("dct_invert.png", buffer_recv);
-        std::cout << "[Rank 0] Recibido DCT Inv" << std::endl;
+        std::cout << "[Rank 0] Recibido DCT Inv (Tiempo de espera: " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - wait_start).count() << "ms)" << std::endl;
 
-        // Recibir DCT Directa del Jefe Grupo 2
+        wait_start = std::chrono::steady_clock::now();
         MPI_Recv(buffer_recv.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 2, 21, MPI_COMM_WORLD, &status);
+        wait_end = std::chrono::steady_clock::now();
         save_to_file("dct_direct.png", buffer_recv);
-        std::cout << "[Rank 0] Recibido DCT Dir" << std::endl;
+        std::cout << "[Rank 0] Recibido DCT Dir (Tiempo de espera: " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - wait_start).count() << "ms)" << std::endl;
 
     } 
     else if (color == 1) {
-        // --- GRUPO SRM (Rank 1 global) ---
-        // Este grupo podría tener más procesos si aumentasemos -np. 
-        // compute_srm_group usará todos los procesos de 'local_comm'.
         if(local_rank == 0) std::cout << "[Grupo SRM] Procesando con " << local_procs << " procesos..." << std::endl;
 
         Image<unsigned char> srm3 = compute_srm_group(image, 3, local_comm);
-        // El jefe local (local_rank 0) envía al Rank 0 global
         if (local_rank == 0) {
             MPI_Send(srm3.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 10, MPI_COMM_WORLD);
         }
@@ -258,12 +309,10 @@ int main(int argc, char **argv) {
         }
     } 
     else if (color == 2) {
-        // --- GRUPO DCT (Rank 2, 3... globales) ---
         if(local_rank == 0) std::cout << "[Grupo DCT] Procesando con " << local_procs << " procesos..." << std::endl;
 
         Image<unsigned char> dct_i = compute_dct_group(image, 8, true, local_comm);
         if (local_rank == 0) {
-            // Rank 2 global es el local_rank 0 de este grupo
             MPI_Send(dct_i.matrix.get(), img_size, MPI_UNSIGNED_CHAR, 0, 20, MPI_COMM_WORLD);
         }
 
@@ -273,8 +322,16 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Liberar el comunicador temporal
     MPI_Comm_free(&local_comm);
+
+    if (world_rank == 0) {
+        auto total_end = std::chrono::steady_clock::now();
+        std::cout << "\n==========================================" << std::endl;
+        std::cout << "Total execution time (MPI Master): " 
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_begin).count() << "ms" 
+                  << std::endl;
+        std::cout << "==========================================" << std::endl;
+    }
 
     MPI_Finalize();
     return 0;
