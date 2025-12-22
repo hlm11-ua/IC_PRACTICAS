@@ -48,6 +48,7 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
     Image<float> srm_input = image.to_grayscale().convert<float>();
     Image<float> kernel = get_srm_kernel(kernel_size);
     
+    // Todos asignan memoria (aunque los esclavos solo usaran una parte, simplifica el offset)
     Image<float> srm_output(srm_input.width, srm_input.height, 1);
 
     int rows_per_proc = srm_input.height / procs;
@@ -59,6 +60,8 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
 
     auto t2_start = std::chrono::steady_clock::now();
     int k_center = kernel.width / 2;
+    
+    // 1. Convolución Local
     for (int j = start_row; j < end_row; j++) {
         for (int i = 0; i < srm_input.width; i++) {
             float sum = 0.0;
@@ -79,13 +82,27 @@ Image<unsigned char> compute_srm(const Image<unsigned char> &image, int kernel_s
     long int count = rows_per_proc * srm_input.width;
     float* my_data_ptr = srm_output.matrix.get() + (start_row * srm_input.width);
 
-    MPI_Gather(my_data_ptr, count, MPI_FLOAT, 
-               rank == 0 ? srm_output.matrix.get() : NULL, count, MPI_FLOAT, 
-               0, MPI_COMM_WORLD);
+    // ---------------------------------------------------------
+    // CORRECCIÓN: Uso de MPI_IN_PLACE para evitar aliasing en Rank 0
+    // ---------------------------------------------------------
+    if (rank == 0) {
+        // El Rank 0 ya tiene sus datos en el lugar correcto del buffer de destino.
+        // Usamos MPI_IN_PLACE para decirle a MPI que no los copie sobre sí mismo.
+        MPI_Gather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, 
+                   srm_output.matrix.get(), count, MPI_FLOAT, 
+                   0, MPI_COMM_WORLD);
+    } else {
+        // Los demás procesos envían sus datos al buffer del Rank 0 (recvbuf es NULL aquí).
+        MPI_Gather(my_data_ptr, count, MPI_FLOAT, 
+                   NULL, 0, MPI_DATATYPE_NULL, 
+                   0, MPI_COMM_WORLD);
+    }
+    // ---------------------------------------------------------
 
     if (rank == 0) {
         int processed_rows = rows_per_proc * procs;
         
+        // Procesar filas restantes (si la división no fue exacta)
         for (int j = processed_rows; j < srm_input.height; j++) {
             for (int i = 0; i < srm_input.width; i++) {
                 float sum = 0.0;
