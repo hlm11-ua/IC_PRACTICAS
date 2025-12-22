@@ -96,6 +96,7 @@ Image<unsigned char> compute_ela(const Image<unsigned char> &image, int quality)
 }
 
 int main(int argc, char **argv) {
+    auto total_begin = std::chrono::steady_clock::now();
     if(argc == 1) {
         std::cerr<<"Image filename missing from arguments. Usage ./dct <filename>"<<std::endl;
         exit(1);
@@ -109,5 +110,9 @@ int main(int argc, char **argv) {
     save_to_file("dct_invert.png", compute_dct(image, block_size, true));
     save_to_file("dct_direct.png", compute_dct(image, block_size, false));
 
+    auto total_end = std::chrono::steady_clock::now();
+    std::cout << "Tiempo total de ejecución: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_begin).count()
+              << "ms" << std::endl;
     return 0;
 }
